@@ -130,7 +130,7 @@ const ViewerPage: React.FC = () => {
       }
     };
 
-    const handleCandidate = (id: string, candidate: RTCIceCandidateInit) => {
+    const handleCandidate = (_id: string, candidate: RTCIceCandidateInit) => {
       console.log("[Signal] Received ICE candidate:", candidate);
       pcRef.current?.addIceCandidate(new RTCIceCandidate(candidate))
         .catch(err => console.error("[PC] addIceCandidate error:", err));
