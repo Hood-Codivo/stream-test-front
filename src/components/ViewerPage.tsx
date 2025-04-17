@@ -1,4 +1,3 @@
-// src/components/ViewerPage.tsx
 import React, { useEffect, useRef } from "react";
 import { io, Socket } from "socket.io-client";
 
@@ -19,8 +18,8 @@ const ICE_SERVERS: RTCIceServer[] = (() => {
 
 const ViewerPage: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const socketRef = useRef<Socket>();
-  const peerConnectionRef = useRef<RTCPeerConnection>();
+  const socketRef = useRef<Socket | null>(null);
+  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
 
   useEffect(() => {
     const socket = io(getSocketUrl(), {
@@ -47,8 +46,8 @@ const ViewerPage: React.FC = () => {
         };
 
         pc.onicecandidate = (evt) => {
-          if (evt.candidate) {
-            socket.emit("candidate", id, evt.candidate);
+          if (evt.candidate && socketRef.current) {
+            socketRef.current.emit("candidate", id, evt.candidate);
           }
         };
 
@@ -58,7 +57,7 @@ const ViewerPage: React.FC = () => {
           await pc.setLocalDescription(answer);
           socket.emit("answer", id, pc.localDescription);
         } catch (e) {
-          console.error("❌ Offer handling failed:", e);
+          console.error("Offer handling failed:", e);
         }
       }
     );

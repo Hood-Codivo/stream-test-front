@@ -1,4 +1,3 @@
-// src/components/StreamerStudio.tsx
 import { useEffect, useRef } from "react";
 import { io, Socket } from "socket.io-client";
 
@@ -6,7 +5,7 @@ const getSocketUrl = () => {
   if (typeof window !== "undefined") {
     return import.meta.env.VITE_SOCKET_SERVER_URL || window.location.origin;
   }
-  return "http://localhost:3000"; // fallback during SSR or build
+  return "http://localhost:3000";
 };
 
 const ICE_SERVERS: RTCIceServer[] = (() => {
@@ -19,9 +18,9 @@ const ICE_SERVERS: RTCIceServer[] = (() => {
 
 const StreamerStudio = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const socketRef = useRef<Socket>();
+  const socketRef = useRef<Socket | null>(null);
   const peerConnections = useRef<Record<string, RTCPeerConnection>>({});
-  let localStream: MediaStream;
+  const localStream = useRef<MediaStream | null>(null);
 
   useEffect(() => {
     const socket = io(getSocketUrl(), {
@@ -33,13 +32,14 @@ const StreamerStudio = () => {
 
     const startStreaming = async () => {
       try {
-        localStream = await navigator.mediaDevices.getUserMedia({
+        const stream = await navigator.mediaDevices.getUserMedia({
           video: true,
           audio: true,
         });
+        localStream.current = stream;
 
         if (videoRef.current) {
-          videoRef.current.srcObject = localStream;
+          videoRef.current.srcObject = stream;
         }
 
         socket.emit("broadcaster");
@@ -48,7 +48,7 @@ const StreamerStudio = () => {
         socket.on("candidate", handleCandidate);
         socket.on("disconnectPeer", handleDisconnectPeer);
       } catch (err) {
-        console.error("⚠️  Media error:", err);
+        console.error("Media error:", err);
       }
     };
 
@@ -56,13 +56,13 @@ const StreamerStudio = () => {
       const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
       peerConnections.current[id] = pc;
 
-      localStream.getTracks().forEach((track) => {
-        pc.addTrack(track, localStream);
+      localStream.current?.getTracks().forEach((track) => {
+        pc.addTrack(track, localStream.current!);
       });
 
       pc.onicecandidate = (e) => {
-        if (e.candidate) {
-          socket.emit("candidate", id, e.candidate);
+        if (e.candidate && socketRef.current) {
+          socketRef.current.emit("candidate", id, e.candidate);
         }
       };
 
@@ -79,7 +79,7 @@ const StreamerStudio = () => {
         await pc.setLocalDescription(offer);
         socket.emit("offer", id, pc.localDescription);
       } catch (e) {
-        console.error("⚠️  Offer failed:", e);
+        console.error("Offer creation failed:", e);
       }
     };
 
@@ -108,7 +108,7 @@ const StreamerStudio = () => {
       socket.off("candidate", handleCandidate);
       socket.off("disconnectPeer", handleDisconnectPeer);
       socket.disconnect();
-      localStream?.getTracks().forEach((t) => t.stop());
+      localStream.current?.getTracks().forEach((t) => t.stop());
     };
   }, []);
 
