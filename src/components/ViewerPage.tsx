@@ -49,8 +49,8 @@ const ICE_SERVERS: RTCIceServer[] = (() => {
 
 const ViewerPage: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const socketRef = useRef<Socket>();
-  const pcRef = useRef<RTCPeerConnection>();
+  const socketRef = useRef<Socket | null>(null); // Fixed with null initialization
+  const pcRef = useRef<RTCPeerConnection | null>(null); // Fixed with null initialization
 
   useEffect(() => {
     const socket = createSocket(getSocketUrl());
@@ -133,6 +133,7 @@ const ViewerPage: React.FC = () => {
         width={640}
         height={480}
         className="bg-black rounded shadow"
+        onCanPlay={() => videoRef.current?.play().catch(console.error)}
       />
     </div>
   );
