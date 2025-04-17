@@ -5,7 +5,7 @@ const getSocketUrl = () => {
   if (typeof window !== "undefined") {
     return import.meta.env.VITE_SOCKET_SERVER_URL || window.location.origin;
   }
-  return "http://localhost:3000";
+  return "https://stream-test-backend.onrender.com";
 };
 
 const ICE_SERVERS: RTCIceServer[] = (() => {
