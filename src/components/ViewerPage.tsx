@@ -2,14 +2,17 @@
 import React, { useEffect, useRef } from "react";
 import { io, Socket } from "socket.io-client";
 
-const SOCKET_URL =
-  import.meta.env.VITE_SOCKET_SERVER_URL || window.location.origin;
+const getSocketUrl = () => {
+  if (typeof window !== "undefined") {
+    return import.meta.env.VITE_SOCKET_SERVER_URL || window.location.origin;
+  }
+  return "http://localhost:3000";
+};
 
 const ICE_SERVERS: RTCIceServer[] = (() => {
   try {
     return JSON.parse(import.meta.env.VITE_ICE_SERVERS || "[]");
   } catch {
-    // Fallback to Google STUN if your env var is malformed or missing
     return [{ urls: "stun:stun.l.google.com:19302" }];
   }
 })();
@@ -20,35 +23,29 @@ const ViewerPage: React.FC = () => {
   const peerConnectionRef = useRef<RTCPeerConnection>();
 
   useEffect(() => {
-    // 1) Connect to your production socket URL, websocket‑only
-    const socket = io(SOCKET_URL, {
+    const socket = io(getSocketUrl(), {
       transports: ["websocket"],
       secure: true,
       reconnectionAttempts: 5,
     });
     socketRef.current = socket;
 
-    // 2) When broadcaster announces, tell them we’re watching
     socket.on("broadcaster", () => {
       socket.emit("watcher");
     });
 
-    // 3) Handle the incoming offer from the broadcaster
     socket.on(
       "offer",
       async (id: string, description: RTCSessionDescriptionInit) => {
-        // Create peer connection with your ICE servers list
         const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
         peerConnectionRef.current = pc;
 
-        // When we get tracks, attach to our <video>
         pc.ontrack = (evt) => {
           if (videoRef.current && evt.streams[0]) {
             videoRef.current.srcObject = evt.streams[0];
           }
         };
 
-        // Relay our ICE candidates back to the broadcaster
         pc.onicecandidate = (evt) => {
           if (evt.candidate) {
             socket.emit("candidate", id, evt.candidate);
@@ -56,7 +53,6 @@ const ViewerPage: React.FC = () => {
         };
 
         try {
-          // Apply remote description, then create + send answer
           await pc.setRemoteDescription(description);
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
@@ -67,7 +63,6 @@ const ViewerPage: React.FC = () => {
       }
     );
 
-    // 4) Add any ICE candidates we receive
     socket.on(
       "candidate",
       (_id: string, candidate: RTCIceCandidateInit) => {
@@ -77,7 +72,6 @@ const ViewerPage: React.FC = () => {
       }
     );
 
-    // 5) Clean up on unmount
     return () => {
       socket.off("broadcaster");
       socket.off("offer");

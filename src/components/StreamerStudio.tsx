@@ -2,8 +2,12 @@
 import { useEffect, useRef } from "react";
 import { io, Socket } from "socket.io-client";
 
-const SOCKET_URL =
-  import.meta.env.VITE_SOCKET_SERVER_URL || window.location.origin;
+const getSocketUrl = () => {
+  if (typeof window !== "undefined") {
+    return import.meta.env.VITE_SOCKET_SERVER_URL || window.location.origin;
+  }
+  return "http://localhost:3000"; // fallback during SSR or build
+};
 
 const ICE_SERVERS: RTCIceServer[] = (() => {
   try {
@@ -20,15 +24,13 @@ const StreamerStudio = () => {
   let localStream: MediaStream;
 
   useEffect(() => {
-    // 1) connect
-    const socket = io(SOCKET_URL, {
+    const socket = io(getSocketUrl(), {
       transports: ["websocket"],
       secure: true,
       reconnectionAttempts: 5,
     });
     socketRef.current = socket;
 
-    // 2) get camera/mic
     const startStreaming = async () => {
       try {
         localStream = await navigator.mediaDevices.getUserMedia({
@@ -40,10 +42,8 @@ const StreamerStudio = () => {
           videoRef.current.srcObject = localStream;
         }
 
-        // tell server we’re broadcasting
         socket.emit("broadcaster");
 
-        // register handlers
         socket.on("watcher", handleWatcher);
         socket.on("candidate", handleCandidate);
         socket.on("disconnectPeer", handleDisconnectPeer);
@@ -52,35 +52,28 @@ const StreamerStudio = () => {
       }
     };
 
-    // 3) when a new viewer arrives
     const handleWatcher = async (id: string) => {
       const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
       peerConnections.current[id] = pc;
 
-      // add our tracks
       localStream.getTracks().forEach((track) => {
         pc.addTrack(track, localStream);
       });
 
-      // relay ICE candidates
       pc.onicecandidate = (e) => {
         if (e.candidate) {
           socket.emit("candidate", id, e.candidate);
         }
       };
 
-      // answer from viewer
       socket.on("answer", (answerId, description) => {
         if (answerId === id) {
-          pc
-            .setRemoteDescription(description)
-            .catch((e) =>
-              console.error(`setRemoteDescription for ${id} failed:`, e)
-            );
+          pc.setRemoteDescription(description).catch((e) =>
+            console.error(`setRemoteDescription for ${id} failed:`, e)
+          );
         }
       });
 
-      // create and send offer
       try {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
@@ -90,11 +83,7 @@ const StreamerStudio = () => {
       }
     };
 
-    // 4) incoming ICE candidates from viewers
-    const handleCandidate = (
-      id: string,
-      candidate: RTCIceCandidateInit
-    ) => {
+    const handleCandidate = (id: string, candidate: RTCIceCandidateInit) => {
       const pc = peerConnections.current[id];
       if (pc) {
         pc.addIceCandidate(new RTCIceCandidate(candidate)).catch((e) =>
@@ -103,7 +92,6 @@ const StreamerStudio = () => {
       }
     };
 
-    // 5) viewer went away
     const handleDisconnectPeer = (id: string) => {
       const pc = peerConnections.current[id];
       if (pc) {
@@ -115,7 +103,6 @@ const StreamerStudio = () => {
     startStreaming();
 
     return () => {
-      // cleanup all
       Object.values(peerConnections.current).forEach((pc) => pc.close());
       socket.off("watcher", handleWatcher);
       socket.off("candidate", handleCandidate);
