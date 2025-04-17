@@ -11,7 +11,7 @@ export default defineConfig({
     proxy: {
       // Proxy WebSocket (and HTTP) for Socket.IO
       "/socket.io": {
-        target: "http://127.0.0.1:3000",
+        target: "https://stream-test-backend.onrender.com",
         ws: true, // enable WebSocket proxying :contentReference[oaicite:1]{index=1}
         changeOrigin: true,
         secure: false,
