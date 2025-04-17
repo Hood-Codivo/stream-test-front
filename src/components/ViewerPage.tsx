@@ -43,87 +43,122 @@ const ICE_SERVERS: RTCIceServer[] = (() => {
   try {
     return JSON.parse(import.meta.env.VITE_ICE_SERVERS || "[]");
   } catch {
-    return [{ urls: "stun:stun.l.google.com:19302" }];
+    return [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" },
+      { urls: "stun:stun2.l.google.com:19302" }
+    ];
   }
 })();
 
 const ViewerPage: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const socketRef = useRef<Socket | null>(null); // Fixed with null initialization
-  const pcRef = useRef<RTCPeerConnection | null>(null); // Fixed with null initialization
+  const socketRef = useRef<Socket | null>(null);
+  const pcRef = useRef<RTCPeerConnection | null>(null);
+  const [connectionStatus, setConnectionStatus] = React.useState("Connecting...");
 
   useEffect(() => {
     const socket = createSocket(getSocketUrl());
     socketRef.current = socket;
 
-    // When a broadcaster is present, let them know we're a watcher
-    socket.on("broadcaster", () => {
-      console.log("[Signal] broadcaster detected, sending watcher");
-      socket.emit("watcher");
-    });
-
-    // Handle incoming offer from broadcaster
-    socket.on(
-      "offer",
-      async (id: string, description: RTCSessionDescriptionInit) => {
+    const handleOffer = async (id: string, description: RTCSessionDescriptionInit) => {
+      try {
         console.log("[Signal] offer received from", id, description);
-        const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+        setConnectionStatus("Negotiating connection...");
+
+        // Clean up previous connection if exists
+        if (pcRef.current) {
+          pcRef.current.close();
+        }
+
+        const pc = new RTCPeerConnection({
+          iceServers: ICE_SERVERS,
+          iceTransportPolicy: "all",
+          bundlePolicy: "max-bundle",
+          rtcpMuxPolicy: "require"
+        });
         pcRef.current = pc;
 
-        // Send any ICE candidates back to broadcaster
-        pc.onicecandidate = (evt) => {
-          if (evt.candidate) {
-            console.log("[PC] onicecandidate", evt.candidate);
-            socket.emit("candidate", id, evt.candidate);
+        // ICE Candidate handling
+        pc.onicecandidate = ({ candidate }) => {
+          if (candidate) {
+            console.log("[PC] Sending ICE candidate:", candidate);
+            socket.emit("candidate", id, candidate);
           }
         };
 
-        // When remote track arrives, attach it to the video element
-        pc.ontrack = (evt) => {
-          console.log("[PC] ontrack", evt.streams);
-          if (videoRef.current && evt.streams[0]) {
-            videoRef.current.srcObject = evt.streams[0];
+        // Track handling
+        pc.ontrack = (event) => {
+          console.log("[PC] Received media track:", event.track.kind);
+          if (videoRef.current && event.streams[0]) {
+            const videoElement = videoRef.current;
+            videoElement.srcObject = event.streams[0];
+            videoElement.play().catch(err => {
+              console.error("Autoplay failed:", err);
+              setConnectionStatus("Click to start playback");
+            });
           }
         };
 
-        // Log ICE connection state changes
+        // ICE Connection monitoring
         pc.oniceconnectionstatechange = () => {
-          console.log("[PC] ICE state change", pc.iceConnectionState);
+          console.log("[PC] ICE state:", pc.iceConnectionState);
+          setConnectionStatus(pc.iceConnectionState);
+          if (pc.iceConnectionState === "failed") {
+            pc.restartIce();
+          }
         };
 
-        try {
-          await pc.setRemoteDescription(description);
-          console.log("[PC] remote description set");
+        // Set remote description and create answer
+        await pc.setRemoteDescription(description);
+        console.log("[PC] Remote description set");
 
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-          console.log("[PC] local description set, sending answer");
+        const answer = await pc.createAnswer({
+          offerToReceiveAudio: true,
+          offerToReceiveVideo: true
+        });
+        
+        await pc.setLocalDescription(answer);
+        console.log("[PC] Local description set");
+        
+        socket.emit("answer", id, pc.localDescription);
+        setConnectionStatus("Connected - negotiating media");
 
-          socket.emit("answer", id, pc.localDescription);
-        } catch (err) {
-          console.error("[PC] offer handling failed", err);
-        }
+      } catch (err) {
+        console.error("[PC] Offer handling failed:", err);
+        setConnectionStatus("Connection failed");
       }
-    );
+    };
 
-    // Add incoming ICE candidates
-    socket.on("candidate", (_id: string, candidate: RTCIceCandidateInit) => {
-      console.log("[Signal] candidate received", candidate);
-      pcRef.current
-        ?.addIceCandidate(new RTCIceCandidate(candidate))
-        .then(() => console.log("[PC] candidate added"))
-        .catch((err) => console.error("[PC] addIceCandidate error", err));
+    const handleCandidate = (id: string, candidate: RTCIceCandidateInit) => {
+      console.log("[Signal] Received ICE candidate:", candidate);
+      pcRef.current?.addIceCandidate(new RTCIceCandidate(candidate))
+        .catch(err => console.error("[PC] addIceCandidate error:", err));
+    };
+
+    // Setup listeners
+    socket.on("broadcaster", () => {
+      console.log("[Signal] Broadcaster detected");
+      socket.emit("watcher");
+      setConnectionStatus("Broadcaster found");
     });
 
+    socket.on("offer", handleOffer);
+    socket.on("candidate", handleCandidate);
+
     return () => {
-      console.log("[Cleanup] disconnecting socket and closing peer connection");
+      console.log("[Cleanup] Disconnecting...");
+      socket.off("broadcaster");
+      socket.off("offer", handleOffer);
+      socket.off("candidate", handleCandidate);
       socket.disconnect();
       pcRef.current?.close();
+      setConnectionStatus("Disconnected");
     };
   }, []);
 
   return (
-    <div className="p-4">
+    <div className="p-4" onClick={() => videoRef.current?.play().catch(console.error)}>
       <h1 className="text-2xl font-semibold mb-4">Viewer</h1>
       <video
         ref={videoRef}
@@ -133,8 +168,18 @@ const ViewerPage: React.FC = () => {
         width={640}
         height={480}
         className="bg-black rounded shadow"
-        onCanPlay={() => videoRef.current?.play().catch(console.error)}
+        onCanPlay={() => {
+          console.log("Video ready to play");
+          videoRef.current?.play().catch(console.error);
+        }}
+        onError={(e) => {
+          console.error("Video error:", e.nativeEvent);
+          setConnectionStatus("Video playback error");
+        }}
       />
+      <div className="mt-4 text-center text-gray-400">
+        {connectionStatus}
+      </div>
     </div>
   );
 };
