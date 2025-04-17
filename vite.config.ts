@@ -7,6 +7,7 @@ export default defineConfig({
   define: {
     global: "globalThis",
   },
+  base: "/",
   server: {
     proxy: {
       // Proxy WebSocket (and HTTP) for Socket.IO
