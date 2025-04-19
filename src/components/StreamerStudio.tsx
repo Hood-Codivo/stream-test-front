@@ -1,19 +1,19 @@
-import {useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { io, Socket } from "socket.io-client";
 import { Card } from "../components/ui/card";
 import { Input } from "../components/ui/input";
-import Button  from "../components/ui/button";
-import { toast } from "sonner"
+import Button from "../components/ui/button";
+import { toast } from "sonner";
 
 const StreamerStudio = () => {
-  // WebRTC Refs
+  // Refs
   const videoRef = useRef<HTMLVideoElement>(null);
   const socketRef = useRef<Socket | null>(null);
   const peerConnections = useRef<Record<string, RTCPeerConnection>>({});
   const localStream = useRef<MediaStream | null>(null);
   const screenStream = useRef<MediaStream | null>(null);
 
-  // UI State
+  // State
   const [isLive, setIsLive] = useState(false);
   const [viewerCount, setViewerCount] = useState(0);
   const [isMicMuted, setIsMicMuted] = useState(false);
@@ -24,107 +24,73 @@ const StreamerStudio = () => {
   const [newChatMessage, setNewChatMessage] = useState("");
   const [networkQuality, setNetworkQuality] = useState(95);
   const [streamDescription, setStreamDescription] = useState("");
-  const [, setStreamKey] = useState("");
+  const [streamKey, setStreamKey] = useState("");
 
+  const ICE_SERVERS = useMemo<RTCIceServer[]>(
+    () => [{ urls: "stun:stun.l.google.com:19302" }],
+    []
+  );
 
+  const streamStats = useMemo(
+    () => ({
+      bitrate: "4500 kbps",
+      framerate: "60 FPS",
+      latency: "1.2s",
+    }),
+    []
+  );
 
-  const [streamStats] = useState({
-    bitrate: "4500 kbps",
-    framerate: "60 FPS",
-    latency: "1.2s",
-  });
-
-  useEffect(() => {
-    const generateStreamKey = () => {
-      const characters = "abcdefghijklmnopqrstuvwxyz0123456789";
-      let key = "sol_";
-
-      for (let i = 0; i < 16; i++) {
-        key += characters.charAt(Math.floor(Math.random() * characters.length));
-      }
-
-      return key;
-    };
-
-    setStreamKey(generateStreamKey());
-  }, []);
-
-
-
-  // WebRTC Configuration
-  const getSocketUrl = () => {
+  const getSocketUrl = useCallback(() => {
     if (typeof window !== "undefined") {
       return import.meta.env.VITE_SOCKET_SERVER_URL || window.location.origin;
     }
     return "https://stream-test-backend.onrender.com";
-  };
-
-  const ICE_SERVERS: RTCIceServer[] = [
-    { urls: "stun:stun.l.google.com:19302" },
-  ];
-
-    const handleGoLive = () => {
-  if (!streamTitle.trim()) {
-    toast.error("Please enter a title for your stream");
-    return;
-  }
-  setIsLive(true);
-};
-
-
-  // Add network quality simulation
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setNetworkQuality((prev) =>
-        Math.max(70, Math.min(100, prev + (Math.random() * 4 - 2)))
-      );
-    }, 5000);
-
-    return () => clearInterval(interval);
   }, []);
 
-  // WebRTC Logic
-  useEffect(() => {
-    const socket = io(getSocketUrl(), {
-      transports: ["websocket"],
-      secure: true,
-      reconnectionAttempts: 5,
-    });
-    socketRef.current = socket;
+  // Stream initialization
+  const initializeStream = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: !isCameraOff,
+        audio: !isMicMuted,
+      });
+      localStream.current = stream;
 
-    const startStreaming = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: !isCameraOff,
-          audio: !isMicMuted,
-        });
-        localStream.current = stream;
-
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          videoRef.current.play().catch(console.error);
-        }
-
-        socket.emit("broadcaster");
-        setIsLive(true);
-
-        socket.on("watcher", handleWatcher);
-        socket.on("candidate", handleCandidate);
-        socket.on("disconnectPeer", handleDisconnectPeer);
-      } catch (err) {
-        console.error("Media error:", err);
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play().catch(console.error);
       }
-    };
 
-    const handleWatcher = async (id: string) => {
+      const socket = io(getSocketUrl(), {
+        transports: ["websocket"],
+        secure: true,
+        reconnectionAttempts: 5,
+      });
+      socketRef.current = socket;
+
+      socket.on("watcher", handleWatcher);
+      socket.on("candidate", handleCandidate);
+      socket.on("disconnectPeer", handleDisconnectPeer);
+      socket.emit("broadcaster");
+
+      setIsLive(true);
+      toast.success("Stream started successfully!");
+    } catch (err) {
+      console.error("Media error:", err);
+      toast.error("Failed to access media devices");
+    }
+  }, [isCameraOff, isMicMuted, getSocketUrl]);
+
+  // WebRTC Handlers
+  const handleWatcher = useCallback(
+    async (id: string) => {
       const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
       peerConnections.current[id] = pc;
       setViewerCount((prev) => prev + 1);
 
-      const currentStream =
-        isScreenSharing && screenStream.current
-          ? screenStream.current
-          : localStream.current;
+      const currentStream = isScreenSharing && screenStream.current 
+        ? screenStream.current 
+        : localStream.current;
 
       currentStream?.getTracks().forEach((track) => {
         pc.addTrack(track, currentStream);
@@ -136,12 +102,6 @@ const StreamerStudio = () => {
         }
       };
 
-      socketRef.current?.on("answer", (answerId, description) => {
-        if (answerId === id) {
-          pc.setRemoteDescription(description).catch(console.error);
-        }
-      });
-
       try {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
@@ -149,51 +109,38 @@ const StreamerStudio = () => {
       } catch (e) {
         console.error("Offer creation failed:", e);
       }
-    };
+    },
+    [ICE_SERVERS, isScreenSharing]
+  );
 
-    const handleCandidate = (id: string, candidate: RTCIceCandidateInit) => {
-      const pc = peerConnections.current[id];
-      pc?.addIceCandidate(new RTCIceCandidate(candidate)).catch(console.error);
-    };
+  const handleCandidate = useCallback((id: string, c: RTCIceCandidateInit) => {
+    peerConnections.current[id]?.addIceCandidate(new RTCIceCandidate(c));
+  }, []);
 
-    const handleDisconnectPeer = (id: string) => {
-      const pc = peerConnections.current[id];
-      if (pc) {
-        pc.close();
-        delete peerConnections.current[id];
-        setViewerCount((prev) => prev - 1);
-      }
-    };
+  const handleDisconnectPeer = useCallback((id: string) => {
+    peerConnections.current[id]?.close();
+    delete peerConnections.current[id];
+    setViewerCount((prev) => prev - 1);
+  }, []);
 
-    if (!isLive) startStreaming();
-
-    return () => {
-      Object.values(peerConnections.current).forEach((pc) => pc.close());
-      socket.off("watcher", handleWatcher);
-      socket.off("candidate", handleCandidate);
-      socket.off("disconnectPeer", handleDisconnectPeer);
-      socket.disconnect();
-      localStream.current?.getTracks().forEach((t) => t.stop());
-      screenStream.current?.getTracks().forEach((t) => t.stop());
-    };
-  }, [isLive, isCameraOff, isMicMuted, isScreenSharing]);
-
-  // UI Handlers
-  const toggleMic = () => {
-    setIsMicMuted(!isMicMuted);
+  // Device Controls
+  const toggleMic = useCallback(() => {
+    const newMuteState = !isMicMuted;
+    setIsMicMuted(newMuteState);
     localStream.current?.getAudioTracks().forEach((track) => {
-      track.enabled = isMicMuted;
+      track.enabled = !newMuteState;
     });
-  };
+  }, [isMicMuted]);
 
-  const toggleCamera = () => {
-    setIsCameraOff(!isCameraOff);
+  const toggleCamera = useCallback(() => {
+    const newCameraState = !isCameraOff;
+    setIsCameraOff(newCameraState);
     localStream.current?.getVideoTracks().forEach((track) => {
-      track.enabled = isCameraOff;
+      track.enabled = !newCameraState;
     });
-  };
+  }, [isCameraOff]);
 
-  const toggleScreenShare = async () => {
+  const toggleScreenShare = useCallback(async () => {
     try {
       if (!isScreenSharing) {
         const stream = await navigator.mediaDevices.getDisplayMedia({
@@ -220,9 +167,7 @@ const StreamerStudio = () => {
           videoRef.current.srcObject = localStream.current;
           Object.values(peerConnections.current).forEach((pc) => {
             const videoTrack = localStream.current?.getVideoTracks()[0];
-            const sender = pc
-              .getSenders()
-              .find((s) => s.track?.kind === "video");
+            const sender = pc.getSenders().find((s) => s.track?.kind === "video");
             if (sender && videoTrack) sender.replaceTrack(videoTrack);
           });
         }
@@ -231,15 +176,59 @@ const StreamerStudio = () => {
     } catch (error) {
       console.error("Screen sharing error:", error);
     }
-  };
+  }, [isScreenSharing]);
 
-  const handleChatSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (newChatMessage.trim()) {
-      setChatMessages([...chatMessages, newChatMessage]);
-      setNewChatMessage("");
+  // Stream Controls
+  const handleGoLive = useCallback(async () => {
+    if (!streamTitle.trim()) {
+      toast.error("Please enter a title for your stream");
+      return;
     }
-  };
+    
+    if (!isLive) {
+      await initializeStream();
+    }
+  }, [isLive, streamTitle, initializeStream]);
+
+  const handleChatSubmit = useCallback(
+    (e: React.FormEvent) => {
+      e.preventDefault();
+      if (newChatMessage.trim()) {
+        setChatMessages((prev) => [...prev, newChatMessage]);
+        setNewChatMessage("");
+      }
+    },
+    [newChatMessage]
+  );
+
+  // Effects
+  useEffect(() => {
+    const generateStreamKey = () => {
+      const characters = "abcdefghijklmnopqrstuvwxyz0123456789";
+      return "sol_" + Array.from({ length: 16 }, () =>
+        characters.charAt(Math.floor(Math.random() * characters.length))
+      ).join("");
+    };
+    setStreamKey(generateStreamKey());
+  }, []);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setNetworkQuality((prev) =>
+        Math.max(70, Math.min(100, prev + (Math.random() * 4 - 2))
+      ))
+    }, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      socketRef.current?.disconnect();
+      Object.values(peerConnections.current).forEach((pc) => pc.close());
+      localStream.current?.getTracks().forEach((t) => t.stop());
+      screenStream.current?.getTracks().forEach((t) => t.stop());
+    };
+  }, []);
 
   return (
     <div className="h-screen bg-gray-900 text-white flex flex-col">
@@ -263,14 +252,6 @@ const StreamerStudio = () => {
           </div>
         </div>
         <div className="flex gap-2">
-          <button
-            onClick={() => {
-              /* Implement settings */
-            }}
-            className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-full flex items-center gap-2 transition-colors"
-          >
-            ⚙️ Settings
-          </button>
           <button className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-full flex items-center gap-2 transition-colors">
             ↗️ Share Stream
           </button>
@@ -291,61 +272,48 @@ const StreamerStudio = () => {
             />
             {!isLive && (
               <div className="absolute inset-0 bg-black/80 flex items-center justify-center">
-                <button
-                  onClick={() => setIsLive(true)}
-                  className="px-8 py-4 bg-red-600 hover:bg-red-700 rounded-full text-lg flex items-center gap-2"
+                <Button
+                  onClick={handleGoLive}
+                  variant="primary"
+                  className="px-8 py-4 text-lg"
                 >
                   ▶️ Go Live
-                </button>
+                </Button>
               </div>
             )}
           </div>
 
           {/* Stream Controls */}
           <div className="flex justify-center gap-4">
-            <button
+            <Button
               onClick={toggleMic}
-              className={`px-6 py-3 rounded-full flex items-center gap-2 ${
-                isMicMuted
-                  ? "bg-red-600 hover:bg-red-700"
-                  : "bg-gray-700 hover:bg-gray-600"
-              }`}
+              variant={isMicMuted ? "destructive" : "secondary"}
             >
-              {isMicMuted ? "🎤❌" : "🎤"}
-              {isMicMuted ? "Unmute" : "Mute"}
-            </button>
+              {isMicMuted ? "🎤❌ Unmute" : "🎤 Mute"}
+            </Button>
 
-            <button
+            <Button
               onClick={toggleCamera}
-              className={`px-6 py-3 rounded-full flex items-center gap-2 ${
-                isCameraOff
-                  ? "bg-red-600 hover:bg-red-700"
-                  : "bg-gray-700 hover:bg-gray-600"
-              }`}
+              variant={isCameraOff ? "destructive" : "secondary"}
             >
-              {isCameraOff ? "📷❌" : "📷"}
-              {isCameraOff ? "Show Camera" : "Hide Camera"}
-            </button>
+              {isCameraOff ? "📷❌ Show Camera" : "📷 Hide Camera"}
+            </Button>
 
-            <button
+            <Button
               onClick={toggleScreenShare}
-              className={`px-6 py-3 rounded-full flex items-center gap-2 ${
-                isScreenSharing
-                  ? "bg-blue-600 hover:bg-blue-700"
-                  : "bg-gray-700 hover:bg-gray-600"
-              }`}
+              variant={isScreenSharing ? "primary" : "secondary"}
             >
-              💻
-              {isScreenSharing ? "Stop Sharing" : "Share Screen"}
-            </button>
+              💻 {isScreenSharing ? "Stop Sharing" : "Share Screen"}
+            </Button>
           </div>
 
           {/* Stream Info */}
           <div className="space-y-4 border-gray-900">
-            <input
+            <Input
               value={streamTitle}
               onChange={(e) => setStreamTitle(e.target.value)}
-              className="w-full text-2xl font-bold bg-transparent border-b border-gray-700 focus:outline-none focus:border-blue-500"
+              className="text-2xl font-bold border-b border-gray-700"
+              disabled={isLive}
             />
             <div className="flex gap-4 items-center">
               <div className="flex-1">
@@ -363,12 +331,11 @@ const StreamerStudio = () => {
             </div>
           </div>
         </div>
-        
 
         {/* Right Sidebar */}
         <div className="lg:col-span-1 flex flex-col gap-6">
           {/* Chat Section */}
-          <div className="bg-gray-800 p-4 rounded-xl flex-1 flex flex-col">
+          <Card className="p-4 flex-1 flex flex-col">
             <h2 className="font-semibold mb-4 text-lg">💬 Live Chat</h2>
             <div className="flex-1 overflow-y-auto space-y-2 mb-4">
               {chatMessages.map((msg, i) => (
@@ -378,93 +345,56 @@ const StreamerStudio = () => {
               ))}
             </div>
             <form onSubmit={handleChatSubmit} className="flex gap-2">
-              <input
+              <Input
                 value={newChatMessage}
                 onChange={(e) => setNewChatMessage(e.target.value)}
                 placeholder="Type a message..."
-                className="flex-1 bg-gray-900 text-white px-4 py-2 rounded-lg focus:outline-none"
               />
-              <button
-                type="submit"
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
-              >
-                Send
-              </button>
+              <Button type="submit">Send</Button>
             </form>
-          </div>
+          </Card>
 
-          {/* Stream Stats */}
-          <div className="bg-gray-800 p-4 rounded-xl">
-            <h2 className="font-semibold mb-4 text-lg">📊 Stream Stats</h2>
-            <div className="space-y-2">
-              <div className="flex justify-between">
-                <span>Bitrate</span>
-                <span>{streamStats.bitrate}</span>
+          {/* Stream Info Card */}
+          <Card className="p-4">
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">
+                  Stream Key
+                </label>
+                <Input value={streamKey} readOnly />
               </div>
-              <div className="flex justify-between">
-                <span>Framerate</span>
-                <span>{streamStats.framerate}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Latency</span>
-                <span className="text-green-400">{streamStats.latency}</span>
+              <div>
+                <label className="block text-sm font-medium mb-1">
+                  Stream Description
+                </label>
+                <textarea
+                  value={streamDescription}
+                  onChange={(e) => setStreamDescription(e.target.value)}
+                  className="w-full px-4 py-2 bg-gray-800 text-white rounded-lg"
+                  disabled={isLive}
+                />
               </div>
             </div>
-          </div>
-        </div>
-      
-       <div className="w-full">
-              <Card className="p-4 w-full">
-                <div className="space-y-4">
-                  <div>
-                    <label
-                      htmlFor="title"
-                      className="block text-sm font-medium mb-1"
-                    >
-                      Stream Title
-                    </label>
-                    <Input
-                      id="title"
-                      value={streamTitle}
-                      onChange={(e : any) => setStreamTitle(e.target.value)}
-                      placeholder="Enter a catchy title for your stream"
-                      disabled={isLive}
-                    />
-                  </div>
-                  <div>
-                    <label
-                      htmlFor="description"
-                      className="block text-sm font-medium mb-1"
-                    >
-                      Stream Description
-                    </label> 
-                   <textarea
-                        id="description"
-                        value={streamDescription}
-                        onChange={(e) => setStreamDescription(e.target.value)}
-                        placeholder="Describe what you'll be streaming…"
-                        disabled={isLive}
-                        className="w-full px-4 py-2 bg-gray-800 text-white rounded-lg"
-                        />
-                  </div>
-                  {!isLive && (
-                    <div className="pt-2">
-                      <Button
-                        onClick={handleGoLive}
-                        className="w-full bg-gradient-to-r from-primary to-accent hover:opacity-90"
-                      >
-                        Start Streaming
-                      </Button>
-                    </div>
-                  )}
+          </Card>
+
+          {/* Stream Stats */}
+          <Card className="p-4">
+            <h2 className="font-semibold mb-4 text-lg">📊 Stream Stats</h2>
+            <div className="space-y-2">
+              {Object.entries(streamStats).map(([key, value]) => (
+                <div key={key} className="flex justify-between">
+                  <span>{key.charAt(0).toUpperCase() + key.slice(1)}</span>
+                  <span className={key === 'latency' ? 'text-green-400' : ''}>
+                    {value}
+                  </span>
                 </div>
-                </Card>
-              </div>
-             
+              ))}
+            </div>
+          </Card>
+        </div>
       </div>
     </div>
   );
-}
+};
 
-
-export default StreamerStudio
+export default StreamerStudio;

@@ -3,6 +3,7 @@ import clsx from "clsx";
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?:
+  "primary"
     | "default"
     | "destructive"
     | "outline"
@@ -22,6 +23,7 @@ const buttonVariants = {
     secondary: "bg-gray-100 text-black hover:bg-gray-200",
     ghost: "hover:bg-gray-100",
     link: "text-blue-600 underline hover:text-blue-700",
+    primary: "bg-blue-600 text-white hover:bg-blue-700",
   },
 
   sizes: {
