@@ -1,5 +1,5 @@
 // components/ui/textarea.tsx
-import React, {
+import {
   forwardRef,
   TextareaHTMLAttributes,
 } from "react";
