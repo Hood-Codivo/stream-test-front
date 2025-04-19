@@ -1,6 +1,16 @@
-import { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { io, Socket } from "socket.io-client";
-import { FiCameraOff, FiCamera, FiMic, FiMicOff, FiMessageSquare, FiDollarSign, FiSettings, FiUsers, FiClock } from "react-icons/fi";
+import {
+  FiCameraOff,
+  FiCamera,
+  FiMic,
+  FiMicOff,
+  FiMessageSquare,
+  FiDollarSign,
+  FiSettings,
+  FiUsers,
+  FiClock,
+} from "react-icons/fi";
 
 const getSocketUrl = () => {
   if (typeof window !== "undefined") {
@@ -17,34 +27,35 @@ const ICE_SERVERS: RTCIceServer[] = (() => {
   }
 })();
 
-const StreamerStudio = () => {
+const StreamerStudio: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const socketRef = useRef<Socket | null>(null);
   const peerConnections = useRef<Record<string, RTCPeerConnection>>({});
   const localStream = useRef<MediaStream | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-   const [isStreaming, setIsStreaming] = useState(false);
+  // Streaming & UI state
+  const [isStreaming, setIsStreaming] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isCameraOn, setIsCameraOn] = useState(true);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [activeFilter, setActiveFilter] = useState("none");
-  const [platforms, setPlatforms] = useState({ youtube: true, twitch: true, tiktok: true });
 
-
-  // Chat State
-  const [chatMessages, setChatMessages] = useState<Array<{
-    user: string;
-    message: string;
-    timestamp: number;
-    isMod: boolean;
-  }>>([]);
+  // Chat / Analytics state
+  const [chatMessages, setChatMessages] = useState<
+    Array<{
+      user: string;
+      message: string;
+      timestamp: number;
+      isMod: boolean;
+    }>
+  >([]);
   const [newMessage, setNewMessage] = useState("");
-
-  // Analytics
   const [viewerCount, setViewerCount] = useState(0);
   const [streamDuration, setStreamDuration] = useState(0);
-  const [donations, setDonations] = useState<Array<{ user: string; amount: number }>>([]);
+  const [donations, setDonations] = useState<
+    Array<{ user: string; amount: number }>
+  >([]);
 
   useEffect(() => {
     const socket = io(getSocketUrl(), {
@@ -54,6 +65,7 @@ const StreamerStudio = () => {
     });
     socketRef.current = socket;
 
+    // --- WebRTC Broadcaster Setup ---
     const startStreaming = async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -61,158 +73,135 @@ const StreamerStudio = () => {
           audio: true,
         });
         localStream.current = stream;
+        if (videoRef.current) videoRef.current.srcObject = stream;
 
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-        }
-
+        // Announce yourself as the broadcaster
         socket.emit("broadcaster");
 
-        socket.on("watcher", handleWatcher);
-        socket.on("candidate", handleCandidate);
-        socket.on("disconnectPeer", handleDisconnectPeer);
+        socket.on("watcher", async (id: string) => {
+          const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+          peerConnections.current[id] = pc;
+
+          // send local tracks
+          stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+
+          pc.onicecandidate = (e) => {
+            if (e.candidate) socket.emit("candidate", id, e.candidate);
+          };
+
+          pc.onnegotiationneeded = async () => {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            socket.emit("offer", id, pc.localDescription);
+          };
+        });
+
+        socket.on("candidate", (id: string, candidate: RTCIceCandidateInit) => {
+          const pc = peerConnections.current[id];
+          pc?.addIceCandidate(new RTCIceCandidate(candidate)).catch(console.error);
+        });
+
+        socket.on("answer", (id: string, desc: RTCSessionDescriptionInit) => {
+          const pc = peerConnections.current[id];
+          pc?.setRemoteDescription(desc).catch(console.error);
+        });
+
+        socket.on("disconnectPeer", (id: string) => {
+          const pc = peerConnections.current[id];
+          pc && pc.close();
+          delete peerConnections.current[id];
+        });
       } catch (err) {
         console.error("Media error:", err);
       }
     };
-
-    const handleWatcher = async (id: string) => {
-      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-      peerConnections.current[id] = pc;
-
-      localStream.current?.getTracks().forEach((track) => {
-        pc.addTrack(track, localStream.current!);
-      });
-
-      pc.onicecandidate = (e) => {
-        if (e.candidate && socketRef.current) {
-          socketRef.current.emit("candidate", id, e.candidate);
-        }
-      };
-
-      socket.on("answer", (answerId, description) => {
-        if (answerId === id) {
-          pc.setRemoteDescription(description).catch((e) =>
-            console.error(`setRemoteDescription for ${id} failed:`, e)
-          );
-        }
-      });
-
-      try {
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        socket.emit("offer", id, pc.localDescription);
-      } catch (e) {
-        console.error("Offer creation failed:", e);
-      }
-    };
-
-    const handleCandidate = (id: string, candidate: RTCIceCandidateInit) => {
-      const pc = peerConnections.current[id];
-      if (pc) {
-        pc.addIceCandidate(new RTCIceCandidate(candidate)).catch((e) =>
-          console.error("addIceCandidate error:", e)
-        );
-      }
-    };
-
-    const handleDisconnectPeer = (id: string) => {
-      const pc = peerConnections.current[id];
-      if (pc) {
-        pc.close();
-        delete peerConnections.current[id];
-      }
-    };
-
     startStreaming();
 
+    // --- Chat & Analytics Handlers ---
+    socket.on("chatMessage", (msg) => {
+      setChatMessages((prev) => [...prev, msg]);
+      // scroll to bottom
+      chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    });
+    socket.on("viewerUpdate", setViewerCount);
+    socket.on("donation", (don) =>
+      setDonations((prev) => [...prev.slice(-4), don])
+    );
+
+    // Clean up on unmount
     return () => {
+      // Stop all peer connections
       Object.values(peerConnections.current).forEach((pc) => pc.close());
-      socket.off("watcher", handleWatcher);
-      socket.off("candidate", handleCandidate);
-      socket.off("disconnectPeer", handleDisconnectPeer);
-      socket.disconnect();
+      // Stop media tracks
       localStream.current?.getTracks().forEach((t) => t.stop());
-    };
-  }, []);
-
-  // WebSocket and Chat Setup
-  useEffect(() => {
-    const socket = io("your-socket-server-url");
-    socketRef.current = socket;
-
-    socket.on("chatMessage", (message) => {
-      setChatMessages(prev => [...prev, message]);
-    });
-
-    socket.on("viewerUpdate", (count) => {
-      setViewerCount(count);
-    });
-
-    socket.on("donation", (donation) => {
-      setDonations(prev => [...prev.slice(-4), donation]);
-    });
-    return () => {
       socket.disconnect();
     };
   }, []);
 
-  // Chat Functions
+  // Send a chat message
   const sendMessage = () => {
     if (!newMessage.trim()) return;
-    
-    const message = {
+    const msg = {
       user: "Streamer",
       message: newMessage.trim(),
       timestamp: Date.now(),
-      isMod: true
+      isMod: true,
     };
-
-    socketRef.current?.emit("chatMessage", message);
-    setChatMessages(prev => [...prev, message]);
+    socketRef.current?.emit("chatMessage", msg);
+    setChatMessages((prev) => [...prev, msg]);
     setNewMessage("");
   };
 
-  // Streaming Controls
+  // Toggle the actual stream (start/stop)
   const toggleStream = () => {
     if (!isStreaming) {
       socketRef.current?.emit("startStream");
       const timer = setInterval(() => {
-        setStreamDuration(prev => prev + 1);
+        setStreamDuration((t) => t + 1);
       }, 1000);
+      // clear timer on next toggle
       return () => clearInterval(timer);
     } else {
       socketRef.current?.emit("endStream");
     }
-    setIsStreaming(!isStreaming);
+    setIsStreaming((s) => !s);
   };
 
- return (
-    <div className={`h-screen flex ${theme === "dark" ? "bg-gray-900 text-white" : "bg-gray-50 text-gray-900"}`}>
+  return (
+    <div
+      className={`h-screen flex ${
+        theme === "dark" ? "bg-gray-900 text-white" : "bg-gray-50 text-gray-900"
+      }`}
+    >
       {/* Left Panel */}
       <div className="flex-1 flex flex-col p-6 space-y-6">
-        {/* Stream Title & Analytics */}
+        {/* Title & Stats */}
         <div className="flex justify-between items-center">
           <input
             type="text"
             placeholder="Stream Title"
             className={`text-3xl font-bold bg-transparent border-b-2 ${
-              theme === "dark" ? "border-gray-700 focus:border-purple-500" : "border-gray-300 focus:border-blue-500"
+              theme === "dark"
+                ? "border-gray-700 focus:border-purple-500"
+                : "border-gray-300 focus:border-blue-500"
             } outline-none`}
           />
           <div className="flex items-center space-x-4">
             <div className="flex items-center space-x-2">
-              <FiUsers className="text-xl" />
+              <FiUsers />
               <span>{viewerCount}</span>
             </div>
             <div className="flex items-center space-x-2">
-              <FiClock className="text-xl" />
-              <span>{new Date(streamDuration * 1000).toISOString().substr(11, 8)}</span>
+              <FiClock />
+              <span>
+                {new Date(streamDuration * 1000)
+                  .toISOString()
+                  .substr(11, 8)}
+              </span>
             </div>
           </div>
         </div>
-
-        {/* Video Preview with Filters */}
+        {/* Video Preview */}
         <div className="relative flex-1 bg-black rounded-xl overflow-hidden">
           <video
             ref={videoRef}
@@ -221,38 +210,35 @@ const StreamerStudio = () => {
             playsInline
             className={`h-full w-full object-cover ${activeFilter}`}
           />
-          
-          {/* Overlay Elements */}
+          {/* Recent chat overlay */}
           <div className="absolute bottom-4 left-4 space-y-2">
             {chatMessages.slice(-3).map((msg, i) => (
               <div
                 key={i}
-                className={`p-2 rounded-lg max-w-xs backdrop-blur-sm ${
+                className={`p-2 rounded-lg backdrop-blur-sm ${
                   theme === "dark" ? "bg-gray-900/50" : "bg-white/80"
                 }`}
               >
-                <span className={`font-semibold ${msg.isMod ? "text-red-500" : "text-purple-400"}`}>
-                  @{msg.user}
-                </span>
-                <span className={theme === "dark" ? "text-white" : "text-gray-900"}>: {msg.message}</span>
+                <span className={`font-semibold ${
+                  msg.isMod ? "text-red-500" : "text-purple-400"
+                }`}>@{msg.user}</span>
+                <span>: {msg.message}</span>
               </div>
             ))}
           </div>
-
-          {/* Donation Alerts */}
+          {/* Donation alerts */}
           <div className="absolute top-4 right-4 space-y-2">
-            {donations.map((donation, i) => (
+            {donations.map((d, i) => (
               <div
                 key={i}
                 className="animate-fadeInRight bg-gradient-to-r from-purple-500 to-blue-500 p-3 rounded-lg"
               >
-                <span className="font-bold">🎉 ${donation.amount} from @{donation.user}</span>
+                🎉 ${d.amount} from @{d.user}
               </div>
             ))}
           </div>
         </div>
-
-        {/* Control Bar */}
+        {/* Controls */}
         <div className="flex justify-between items-center">
           <div className="flex space-x-4">
             <button
@@ -270,50 +256,38 @@ const StreamerStudio = () => {
                 "Go Live"
               )}
             </button>
-            
             <button
-              onClick={() => setIsMuted(!isMuted)}
-              className={`p-3 rounded-full ${isMuted ? "bg-red-500" : "bg-gray-700"}`}
+              onClick={() => setIsMuted((m) => !m)}
+              className={`p-3 rounded-full ${
+                isMuted ? "bg-red-500" : "bg-gray-700"
+              }`}
             >
-              {isMuted ? <FiMicOff size={20} /> : <FiMic size={20} />}
+              {isMuted ? <FiMicOff /> : <FiMic />}
             </button>
-            
             <button
-              onClick={() => setIsCameraOn(!isCameraOn)}
-              className={`p-3 rounded-full ${!isCameraOn ? "bg-red-500" : "bg-gray-700"}`}
+              onClick={() => setIsCameraOn((c) => !c)}
+              className={`p-3 rounded-full ${
+                !isCameraOn ? "bg-red-500" : "bg-gray-700"
+              }`}
             >
-              {isCameraOn ? <FiCamera size={20} /> : <FiCameraOff size={20} />}
+              {isCameraOn ? <FiCamera /> : <FiCameraOff />}
             </button>
           </div>
-
-          {/* Platform Selector */}
-          <div className="flex space-x-2">
-            {Object.entries(platforms).map(([platform, active]) => (
-              <button
-                key={platform}
-                onClick={() => setPlatforms(prev => ({ ...prev, [platform]: !active }))}
-                className={`px-4 py-2 rounded-full flex items-center space-x-2 ${
-                  active ? "bg-blue-500" : "bg-gray-700"
-                }`}
-              >
-                <img 
-                  src={`/${platform}-icon.png`} 
-                  alt={platform} 
-                  className="w-5 h-5"
-                />
-                <span className="capitalize">{platform}</span>
-              </button>
-            ))}
-          </div>
+          
+         
         </div>
       </div>
 
       {/* Right Panel */}
-      <div className={`w-96 flex flex-col p-6 space-y-6 ${theme === "dark" ? "bg-gray-800" : "bg-white"}`}>
-        {/* Chat Section */}
+      <div
+        className={`w-96 flex flex-col p-6 space-y-6 ${
+          theme === "dark" ? "bg-gray-800" : "bg-white"
+        }`}
+      >
+        {/* Chat */}
         <div className="flex-1 flex flex-col">
           <h2 className="text-xl font-bold mb-4">Live Chat</h2>
-          <div className="flex-1 overflow-y-auto space-y-3 pr-2">
+          <div className="flex-1 overflow-y-auto pr-2 space-y-3">
             {chatMessages.map((msg, i) => (
               <div
                 key={i}
@@ -323,24 +297,24 @@ const StreamerStudio = () => {
               >
                 <div className="flex justify-between items-center">
                   <div className="flex items-center space-x-2">
-                    <span className={`font-semibold ${msg.isMod ? "text-red-500" : "text-purple-400"}`}>
-                      @{msg.user}
-                    </span>
-                    {msg.isMod && <span className="text-xs bg-red-500 text-white px-1 rounded">MOD</span>}
+                    <span className={`font-semibold ${
+                      msg.isMod ? "text-red-500" : "text-purple-400"
+                    }`}>@{msg.user}</span>
+                    {msg.isMod && (
+                      <span className="text-xs bg-red-500 text-white px-1 rounded">
+                        MOD
+                      </span>
+                    )}
                   </div>
-                  <span className={`text-xs ${theme === "dark" ? "text-gray-400" : "text-gray-600"}`}>
+                  <span className="text-xs">
                     {new Date(msg.timestamp).toLocaleTimeString()}
                   </span>
                 </div>
-                <p className={`mt-1 ${theme === "dark" ? "text-gray-200" : "text-gray-800"}`}>
-                  {msg.message}
-                </p>
+                <p className="mt-1">{msg.message}</p>
               </div>
             ))}
             <div ref={chatEndRef} />
           </div>
-
-          {/* Chat Input */}
           <div className="mt-4 flex space-x-2">
             <input
               type="text"
@@ -356,7 +330,7 @@ const StreamerStudio = () => {
               onClick={sendMessage}
               className="bg-purple-500 p-2 rounded-lg hover:bg-purple-600"
             >
-              <FiMessageSquare size={20} />
+              <FiMessageSquare />
             </button>
           </div>
         </div>
@@ -365,20 +339,20 @@ const StreamerStudio = () => {
         <div className="border-t pt-4 space-y-4">
           <div className="flex justify-between">
             <button
+              onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
               className="flex items-center space-x-2 p-2 hover:bg-gray-700 rounded-lg"
-              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
             >
-              <FiSettings size={20} />
+              <FiSettings />
               <span>Theme: {theme.charAt(0).toUpperCase() + theme.slice(1)}</span>
             </button>
-            
             <button className="flex items-center space-x-2 p-2 hover:bg-gray-700 rounded-lg">
-              <FiDollarSign size={20} />
-              <span>Donations: ${donations.reduce((sum, d) => sum + d.amount, 0)}</span>
+              <FiDollarSign />
+              <span>
+                Donations: $
+                {donations.reduce((sum, d) => sum + d.amount, 0)}
+              </span>
             </button>
           </div>
-
-          {/* Video Filters */}
           <div className="space-y-2">
             <label className="block text-sm font-medium">Video Filters</label>
             <select
