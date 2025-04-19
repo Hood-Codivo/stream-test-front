@@ -1,7 +1,7 @@
 // src/App.tsx (Updated for react-router-dom v6)
 // Use Routes, correct import paths
 import { Routes, Route, Link } from "react-router-dom";
-import StreamerStudio from "./components/StreamerStudio"; // Corrected path and name
+import StreamerStudio from "./components/StreamerStudio"
 import ViewerPage from "./components/ViewerPage"; // Corrected path and name
 
 function App() {
