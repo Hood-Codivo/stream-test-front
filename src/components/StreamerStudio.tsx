@@ -26,10 +26,20 @@ const StreamerStudio = () => {
   const [streamDescription, setStreamDescription] = useState("");
   const [streamKey, setStreamKey] = useState("");
 
-  const ICE_SERVERS = useMemo<RTCIceServer[]>(
-    () => [{ urls: "stun:stun.l.google.com:19302" }],
-    []
-  );
+  const getSocketUrl = useCallback(() => {
+    if (typeof window !== "undefined") {
+      return import.meta.env.VITE_SOCKET_SERVER_URL || window.location.origin;
+    }
+    return "https://stream-test-backend.onrender.com";
+  }, []);
+
+  const ICE_SERVERS = useMemo<RTCIceServer[]>(() => {
+    try {
+      return JSON.parse(import.meta.env.VITE_ICE_SERVERS || "[]");
+    } catch {
+      return [{ urls: "stun:stun.l.google.com:19302" }];
+    }
+  }, []);
 
   const streamStats = useMemo(
     () => ({
@@ -40,12 +50,7 @@ const StreamerStudio = () => {
     []
   );
 
-  const getSocketUrl = useCallback(() => {
-    if (typeof window !== "undefined") {
-      return import.meta.env.VITE_SOCKET_SERVER_URL || window.location.origin;
-    }
-    return "https://stream-test-backend.onrender.com";
-  }, []);
+
 
   // Stream initialization
   const initializeStream = useCallback(async () => {
