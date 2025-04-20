@@ -200,7 +200,7 @@ useEffect(() => {
   const timer = setInterval(() => {
     setDonations(prev => prev.slice(1)); // Remove oldest donation
   }, 5000);
-
+ 
   return () => clearInterval(timer);
 }, []);
 
