@@ -261,7 +261,7 @@ const StreamerStudio: React.FC = () => {
     
     try {
       // 1. First restart the server
-      await restartRenderService(process.env.RENDER_STREAM_SERVICE_ID);
+      await restartRenderService(import.meta.env.RENDER_STREAM_SERVICE_ID);
       
       // 2. Then start local streaming
       await startStreaming();

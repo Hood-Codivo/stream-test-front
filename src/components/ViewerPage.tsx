@@ -5,86 +5,63 @@ import {
   FiShare2,
   FiMessageSquare,
   FiMaximize,
-
   FiX,
 } from "react-icons/fi";
-import { restartRenderService } from "../utils/renderApi";
 import { useParams } from "react-router-dom";
-
 import { QRCodeCanvas } from "qrcode.react";
-
-// --- Helpers -------------------------
+// import { restartRenderService } from "../utils/renderApi";
 
 function createSocket(url: string): Socket {
   const socket = io(url, {
     transports: ["websocket"],
-    secure: true,
     reconnection: true,
-    reconnectionAttempts: Infinity,
     reconnectionDelay: 1000,
     reconnectionDelayMax: 5000,
   });
-  socket.on("connect", () => console.log("[Socket] connected", socket.id));
-  socket.on("disconnect", (r) => console.warn("[Socket] disconnected", r));
+  socket.on("connect", () => console.log("Socket connected:", socket.id));
   return socket;
 }
 
-const getSocketUrl = () =>
-  typeof window !== "undefined"
-    ? import.meta.env.VITE_SOCKET_SERVER_URL || window.location.origin
-    : "https://stream-test-backend.onrender.com";
-
-const ICE_SERVERS: RTCIceServer[] = (() => {
-  try {
-    return JSON.parse(import.meta.env.VITE_ICE_SERVERS || "[]");
-  } catch {
-    return [{ urls: "stun:stun.l.google.com:19302" }];
-  }
-})();
-
-// --- Component -----------------------
+const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
 
 const ViewerPage: React.FC = () => {
   const { streamId } = useParams<{ streamId: string }>();
   const [accessGranted, setAccessGranted] = useState(false);
-  const [showQRCode, setShowQRCode] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState("Connecting...");
+  const [showQRCode, setShowQRCode] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState("Connecting…");
   const [likes, setLikes] = useState(0);
   const [viewerCount, setViewerCount] = useState(0);
-  const [donations, setDonations] = useState<{ user: string; amount: number }[]>([]);
-  const [chatMessages, setChatMessages] = useState<{ user: string; message: string }[]>([]);
-  const [newMessage, setNewMessage] = useState("");
-  const [isChatVisible, setIsChatVisible] = useState(true);
-  const [isTheaterMode, setIsTheaterMode] = useState(false);
+  const [donations, setDonations] = useState<{user:string;amount:number}[]>([]);
+  const [chat, setChat] = useState<{user:string;message:string}[]>([]);
+  const [msg, setMsg] = useState("");
+  const [chatVisible, setChatVisible] = useState(true);
+  const [theater, setTheater] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
-  const socketRef = useRef<Socket | null>(null);
-  const pcRef = useRef<RTCPeerConnection | null>(null);
+  const socketRef = useRef<Socket|null>(null);
+  const pcRef = useRef<RTCPeerConnection|null>(null);
 
-  // ——— One socket + access check ———
   useEffect(() => {
     if (!streamId) return;
-    const socket = createSocket(getSocketUrl());
+    const socket = createSocket(import.meta.env.VITE_SOCKET_SERVER_URL || window.location.origin);
     socketRef.current = socket;
 
     socket.on("connect", () => {
-      socket.emit("joinStream", streamId, (res: { success: boolean }) => {
+      socket.emit("joinStream", streamId, (res:{success:boolean}) => {
         setAccessGranted(res.success);
       });
     });
 
-    socket.on("viewerUpdate", (c: number) => setViewerCount(c));
-    socket.on("donation", (d) => setDonations((p) => [...p, d]));
+    socket.on("viewerUpdate", setViewerCount);
+    socket.on("donation", d => setDonations(ds => [...ds, d]));
 
-    const handleOffer = async (id: string, desc: RTCSessionDescriptionInit) => {
+    const handleOffer = async (id:string, desc:RTCSessionDescriptionInit) => {
       pcRef.current?.close();
       const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
       pcRef.current = pc;
-      pc.onicecandidate = (e) => {
-        if (e.candidate) socket.emit("candidate", id, e.candidate);
-      };
-      pc.ontrack = (e) => {
+      pc.onicecandidate = e => e.candidate && socket.emit("candidate", id, e.candidate);
+      pc.ontrack = e => {
         if (videoRef.current) {
           videoRef.current.srcObject = e.streams[0];
           videoRef.current.play().catch(() => setConnectionStatus("Click to play"));
@@ -94,45 +71,33 @@ const ViewerPage: React.FC = () => {
         setConnectionStatus(pc.iceConnectionState);
         if (pc.iceConnectionState === "failed") pc.restartIce();
       };
-      try {
-        await pc.setRemoteDescription(desc);
-        const ans = await pc.createAnswer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
-        await pc.setLocalDescription(ans);
-        socket.emit("answer", id, pc.localDescription);
-      } catch {
-        setConnectionStatus("Connection failed");
-      }
+      await pc.setRemoteDescription(desc);
+      const ans = await pc.createAnswer({offerToReceiveAudio:true,offerToReceiveVideo:true});
+      await pc.setLocalDescription(ans);
+      socket.emit("answer", id, pc.localDescription);
     };
 
-    socket.on("broadcaster", () => {
-      socket.emit("watcher");
-    });
+    socket.on("broadcaster", () => socket.emit("watcher"));
     socket.on("offer", handleOffer);
-    socket.on("candidate", (_id, cand) =>
-      pcRef.current?.addIceCandidate(new RTCIceCandidate(cand)).catch(console.error)
-    );
+    socket.on("candidate", (_id, c) => pcRef.current?.addIceCandidate(new RTCIceCandidate(c)));
 
     return () => {
       socket.disconnect();
       pcRef.current?.close();
-      setAccessGranted(false);
     };
   }, [streamId]);
 
-  // auto-remove donations
+  // auto‑clear donations
   useEffect(() => {
-    const t = setInterval(() => setDonations((d) => d.slice(1)), 5000);
+    const t = setInterval(() => setDonations(d => d.slice(1)), 5000);
     return () => clearInterval(t);
   }, []);
 
-  const toggleChat = () => setIsChatVisible((v) => !v);
-  const shareUrl = `${window.location.origin}/view/${streamId}`;
-
-  const handleRejoin = async () => {
+  const rejoin = async () => {
     setIsJoining(true);
     try {
-      await restartRenderService(import.meta.env.RENDER_VIEWER_SERVICE_ID);
-      socketRef.current?.emit("joinStream", streamId, (res: { success: boolean }) => {
+      // await restartRenderService();
+      socketRef.current?.emit("joinStream", streamId, (res:{success:boolean}) => {
         setAccessGranted(res.success);
       });
     } finally {
@@ -142,28 +107,31 @@ const ViewerPage: React.FC = () => {
 
   if (!accessGranted) {
     return (
-      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
-        <div className="text-center">
-          <h1 className="text-2xl mb-4">Stream Access Required</h1>
-          <button onClick={handleRejoin} className="px-4 py-2 bg-blue-600 text-white rounded">
-            {isJoining ? "Rejoining…" : "Join Stream"}
-          </button>
-        </div>
+      <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
+        <button
+          onClick={rejoin}
+          disabled={isJoining}
+          className="px-6 py-3 bg-blue-600 rounded"
+        >
+          {isJoining ? "Joining…" : "Join Stream"}
+        </button>
       </div>
     );
   }
 
+  const shareUrl = `${window.location.origin}/view/${streamId}`;
+
   return (
-    <div className="min-h-screen bg-gray-900 text-white relative">
-      {/* Video + Controls */}
-      <div className={`flex ${isTheaterMode ? "h-screen" : "min-h-screen"}`}>
-        <div className={`relative ${isChatVisible ? "flex-1" : "w-full"} bg-black`}>
+    <div className="relative min-h-screen bg-gray-900 text-white">
+      {/* VIDEO + CONTROLS */}
+      <div className={`flex ${theater ? "h-screen" : "min-h-screen"}`}>
+        <div className={`${chatVisible ? "flex-1" : "w-full"} bg-black relative`}>
           <div className="absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/60 to-transparent flex justify-between">
-            <div className="flex items-center space-x-4">
+            <div className="flex items-center space-x-2">
               <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-              <span>LIVE • {viewerCount} watching</span>
+              <span>LIVE • {viewerCount}</span>
             </div>
-            <button onClick={() => setIsTheaterMode((t) => !t)}>
+            <button onClick={() => setTheater(t => !t)}>
               <FiMaximize />
             </button>
           </div>
@@ -172,14 +140,17 @@ const ViewerPage: React.FC = () => {
             autoPlay
             playsInline
             className="w-full h-full object-contain"
-            onClick={() => videoRef.current?.play().catch(console.error)}
+            onClick={() => videoRef.current?.play()}
           />
           <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/60 to-transparent flex justify-between items-center">
+            <button onClick={rejoin} disabled={isJoining} className="px-4 py-2 bg-gray-700 rounded">
+              {isJoining ? "Rejoining…" : "Rejoin"}
+            </button>
             <div className="flex items-center space-x-4">
-              <button onClick={handleRejoin} disabled={isJoining} className="px-4 py-2 bg-gray-700 rounded">
-                {isJoining ? "Rejoining…" : "Rejoin"}
-              </button>
-              <button onClick={() => setLikes((l) => l + 1)} className="flex items-center space-x-2 px-4 py-2 rounded-full hover:bg-white/10">
+              <button
+                onClick={() => setLikes(l => l + 1)}
+                className="flex items-center space-x-1 px-3 py-1 rounded-full hover:bg-white/10"
+              >
                 <FiHeart /> {likes}
               </button>
               <button onClick={() => setShowQRCode(true)} className="p-2 hover:bg-white/10 rounded-full">
@@ -190,42 +161,40 @@ const ViewerPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Chat Sidebar */}
-        {isChatVisible && (
+        {/* CHAT */}
+        {chatVisible && (
           <div className="w-96 bg-gray-800/90 backdrop-blur-lg flex flex-col">
             <div className="p-4 flex justify-between items-center border-b border-gray-700">
-              <h2>Live Chat</h2>
-              <button onClick={toggleChat}>
-                <FiX />
-              </button>
+              <h2>Chat</h2>
+              <button onClick={() => setChatVisible(false)}><FiX/></button>
             </div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              {chatMessages.map((m, i) => (
-                <div key={i} className="flex items-start space-x-3">
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {chat.map((m,i) => (
+                <div key={i} className="flex items-start space-x-2">
                   <div className="w-8 h-8 bg-purple-500 rounded-full flex items-center justify-center">
                     {m.user[0]}
                   </div>
                   <div>
-                    <div className="font-semibold text-purple-400">{m.user}</div>
-                    <p className="text-gray-100">{m.message}</p>
+                    <strong className="text-purple-400">{m.user}</strong>
+                    <p className="text-gray-200">{m.message}</p>
                   </div>
                 </div>
               ))}
             </div>
             <div className="p-4 border-t border-gray-700 flex space-x-2">
               <input
-                value={newMessage}
-                onChange={(e) => setNewMessage(e.target.value)}
-                placeholder="Type a message…"
-                className="flex-1 bg-gray-900 rounded-lg px-4 py-2"
+                value={msg}
+                onChange={e => setMsg(e.target.value)}
+                placeholder="Type…"
+                className="flex-1 bg-gray-900 rounded px-3 py-2"
               />
               <button
                 onClick={() => {
-                  if (!newMessage.trim()) return;
-                  setChatMessages((p) => [...p, { user: "Guest", message: newMessage }]);
-                  setNewMessage("");
+                  if (!msg.trim()) return;
+                  setChat([...chat, { user: "Guest", message: msg }]);
+                  setMsg("");
                 }}
-                className="bg-purple-500 p-2 rounded-lg"
+                className="bg-purple-600 px-3 py-2 rounded"
               >
                 <FiMessageSquare />
               </button>
@@ -234,25 +203,30 @@ const ViewerPage: React.FC = () => {
         )}
       </div>
 
-      {/* Donation Alerts */}
+      {/* DONATIONS */}
       <div className="fixed bottom-4 right-4 space-y-2">
-        {donations.map((d, i) => (
-          <div key={i} className="bg-gradient-to-r from-purple-500 to-blue-500 p-4 rounded-lg flex items-center space-x-3">
+        {donations.map((d,i) => (
+          <div key={i} className="bg-gradient-to-r from-purple-500 to-blue-500 p-3 rounded flex items-center space-x-2">
             <FiHeart />
             <div>
               <div>🎉 ${d.amount}</div>
-              <div className="text-sm">from @{d.user}</div>
+              <small>from @{d.user}</small>
             </div>
           </div>
         ))}
       </div>
 
-      {/* QR Code Modal */}
+      {/* QR MODAL */}
       {showQRCode && (
         <div className="fixed inset-0 bg-black/75 flex items-center justify-center">
           <div className="bg-white p-6 rounded-lg text-center">
-            <h3 className="text-xl mb-4">Scan to Join</h3>
+            <h3 className="mb-4">Scan to Join</h3>
             <QRCodeCanvas value={shareUrl} />
+            <p className="mt-4 break-all">
+              <a href={shareUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
+                {shareUrl}
+              </a>
+            </p>
             <button
               onClick={() => setShowQRCode(false)}
               className="mt-4 bg-red-500 text-white px-4 py-2 rounded"
