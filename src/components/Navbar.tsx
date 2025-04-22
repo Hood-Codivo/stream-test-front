@@ -101,44 +101,42 @@ const Navbar = () => {
               {publicKey && (
                 <>
                   <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={goToStudio}
-                    className="text-primary border-primary"
-                  >
-                    Go Live
-                  </Button>
+                  variant="outline"
+                  size="sm"
+                  onClick={goToStudio}
+                  className="text-primary border-primary cursor-pointer"
+                >
+                  Go Live
+                </Button>
                   <Button
-                    onClick={handleDisconnect}
-                    variant="outline"
-                    className="flex items-center gap-2"
-                  >
-                    <Wallet className="h-4 w-4" />
-                    {`${walletAddress.slice(0, 4)}...${walletAddress.slice(-4)}`}
-                  </Button>
+                  variant="outline"
+                  onClick={handleDisconnect}
+                  className="flex items-center gap-2 cursor-pointer"
+                >
+                  <Wallet className="h-4 w-4" />
+                  {`${walletAddress.slice(0, 4)}…${walletAddress.slice(-4)}`}
+                </Button>
                 </>
               )}
-              <WalletMultiButton 
-                className="!bg-gradient-to-r !from-primary !to-accent hover:!opacity-90 !rounded-full !px-4 !py-2 !text-sm"
-                startIcon={<Wallet className="h-4 w-4 mr-2" />}
-              >
-                {publicKey ? (
-                  `${walletAddress.slice(0, 4)}...${walletAddress.slice(-4)}`
-                ) : (
-                  "Connect Wallet"
-                )}
-              </WalletMultiButton>
+              <WalletMultiButton
+              className="!bg-gradient-to-r !from-primary !to-accent hover:!opacity-90 !rounded-full !px-4 !py-2 !text-sm"
+              startIcon={<Wallet className="h-4 w-4 mr-2" />}
+            >
+              {publicKey
+                ? `${walletAddress.slice(0, 4)}…${walletAddress.slice(-4)}`
+                : "Connect Wallet"}
+            </WalletMultiButton>
             </div>
           </div>
 
           <Button
-            variant="ghost"
-            size="icon"
-            className="md:hidden"
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-          >
-            <Menu className="h-5 w-5" />
-          </Button>
+          variant="ghost"
+          size="icon"
+          className="md:hidden"
+          onClick={() => setMobileMenuOpen((o) => !o)}
+        >
+          <Menu className="h-5 w-5" />
+        </Button>
         </div>
       </div>
 
@@ -185,30 +183,28 @@ const Navbar = () => {
                 <>
                       <Button
                         onClick={goToStudio}
-                        className="text-primary border-primary"
+                        className="text-primary border-primary cursor-pointer"
                       >
                         Go Live
                       </Button>
                       <Button
-                        onClick={handleDisconnect}
-                        variant="outline"
-                        className="flex items-center justify-center gap-2"
-                      >
-                        <Wallet className="h-4 w-4" />
-                        {`${walletAddress.slice(0, 4)}...${walletAddress.slice(-4)}`}
-                      </Button>
+                  variant="outline"
+                  onClick={handleDisconnect}
+                  className="flex items-center gap-2 cursor-pointer"
+                >
+                  <Wallet className="h-4 w-4" />
+                  {`${walletAddress.slice(0, 4)}…${walletAddress.slice(-4)}`}
+                </Button>
                     </>
               )}
-              <WalletMultiButton 
-                className="w-full !bg-gradient-to-r !from-primary !to-accent hover:!opacity-90 !rounded-full !px-4 !py-2 !text-sm"
-                startIcon={<Wallet className="h-4 w-4 mr-2" />}
-              >
-                {publicKey ? (
-                  `${walletAddress.slice(0, 4)}...${walletAddress.slice(-4)}`
-                ) : (
-                  "Connect Wallet"
-                )}
-              </WalletMultiButton>
+              <WalletMultiButton
+              className="!bg-gradient-to-r !from-primary !to-accent hover:!opacity-90 !rounded-full !px-4 !py-2 !text-sm"
+              startIcon={<Wallet className="h-4 w-4 mr-2" />}
+            >
+              {publicKey
+                ? `${walletAddress.slice(0, 4)}…${walletAddress.slice(-4)}`
+                : "Connect Wallet"}
+            </WalletMultiButton>
             </div>
           </div>
         </div>
