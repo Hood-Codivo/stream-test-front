@@ -10,7 +10,18 @@ import {
   FiSettings,
   FiUsers,
   FiClock,
+  FiShare2,
 } from "react-icons/fi";
+
+// MOD: import wallet hook + UI button
+import { useWallet } from "@solana/wallet-adapter-react";
+import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
+
+// MOD: use named import instead of default (no default export in v4)  
+import { QRCodeCanvas } from "qrcode.react";
+import { v4 as uuidv4 } from "uuid";
+import { restartRenderService } from "../utils/renderApi";
+
 
 const getSocketUrl = () => {
   if (typeof window !== "undefined") {
@@ -59,6 +70,18 @@ const StreamerStudio: React.FC = () => {
   const [donations, setDonations] = useState<
     Array<{ user: string; amount: number }>
   >([]);
+
+    // MOD: wallet connection state
+  const { publicKey, connected } = useWallet();
+  const [streamId, setStreamId] = useState<string>("");
+  const [showQR, setShowQR] = useState(false);
+  const [isRestarting, setIsRestarting] = useState(false);
+
+  const generateStreamId = () => {
+    const id = uuidv4();
+    setStreamId(id);
+    return id;
+  };
 
   useEffect(() => {
     const socket = io(getSocketUrl(), {
@@ -149,6 +172,15 @@ const StreamerStudio: React.FC = () => {
       localStream.current = stream;
       if (videoRef.current) videoRef.current.srcObject = stream;
       setIsStreaming(true);
+
+      // MOD: start the duration timer
+      if (!streamTimerRef.current) {
+        streamTimerRef.current = setInterval(
+          () => setStreamDuration((t) => t + 1),
+          1000
+        );
+      }
+
       socketRef.current?.emit("broadcaster");
       socketRef.current?.emit("startStream", {
         title: streamTitle,
@@ -169,20 +201,42 @@ const StreamerStudio: React.FC = () => {
     if (videoRef.current) videoRef.current.srcObject = null;
     socketRef.current?.emit("endStream");
     setIsStreaming(false);
+
+    // MOD: clear the timer
+    if (streamTimerRef.current) {
+      clearInterval(streamTimerRef.current);
+      streamTimerRef.current = null;
+    }
+    setStreamDuration(0);
   };
+
+  // const toggleStream = async () => {
+  //   if (!isStreaming) {
+  //     await startStreaming();
+  //     streamTimerRef.current = setInterval(() => {
+  //       setStreamDuration((t) => t + 1);
+  //     }, 1000);
+  //   } else {
+  //     stopStreaming();
+  //     if (streamTimerRef.current) clearInterval(streamTimerRef.current);
+  //     setStreamDuration(0);
+  //   }
+  // };
 
   const toggleStream = async () => {
     if (!isStreaming) {
-      await startStreaming();
-      streamTimerRef.current = setInterval(() => {
-        setStreamDuration((t) => t + 1);
-      }, 1000);
+      const streamId = generateStreamId()
+      await startStreaming()
+      socketRef.current?.emit('startStream', { 
+        streamId,
+        publicKey: publicKey?.toString(),
+        title: streamTitle,
+        description: streamDescription
+      })
     } else {
-      stopStreaming();
-      if (streamTimerRef.current) clearInterval(streamTimerRef.current);
-      setStreamDuration(0);
+      stopStreaming()
     }
-  };
+  }
 
   const sendMessage = () => {
     if (!newMessage.trim()) return;
@@ -197,6 +251,35 @@ const StreamerStudio: React.FC = () => {
     setNewMessage("");
   };
 
+   /**
+   * Handles the "Go Live" action with server restart
+   */
+  const handleGoLive = async () => {
+    if (!publicKey) return;
+    
+    setIsRestarting(true);
+    
+    try {
+      // 1. First restart the server
+      await restartRenderService(process.env.RENDER_STREAM_SERVICE_ID);
+      
+      // 2. Then start local streaming
+      await startStreaming();
+      
+      // 3. Generate stream ID after restart
+      const streamId = generateStreamId();
+      socketRef.current?.emit('startStream', { 
+        streamId,
+        publicKey: publicKey.toString()
+      });
+      
+    } catch (error) {
+      console.error('Go Live failed:', error);
+    } finally {
+      setIsRestarting(false);
+    }
+  };
+
 
   return (
   <div
@@ -204,8 +287,63 @@ const StreamerStudio: React.FC = () => {
       theme === "dark" ? "bg-gray-900 text-white" : "bg-gray-50 text-gray-900"
     }`}
   >
+
+     {/* QR Code Modal & Stream ID Display (unchanged) */}
+      {showQR && (
+        <div className="fixed inset-0 bg-black/75 flex items-center justify-center">
+          <div className="bg-white p-6 rounded-lg">
+            <h3 className="text-xl mb-4">Share Stream Access</h3>
+             {/* MOD: render QRCodeCanvas instead of default QRCode */}
+            <QRCodeCanvas value={`${window.location.origin}/view/${streamId}`} />
+            <div className="mt-4">
+              <button
+                onClick={() => setShowQR(false)}
+                className="bg-red-500 text-white px-4 py-2 rounded"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/*  */}
+            {/* Add Access Code Display */}
+      {isStreaming && (
+        <div className="absolute top-20 right-4 bg-gray-800 p-4 rounded">
+          <div className="flex items-center gap-2 mb-2">
+            <span>Stream ID: {streamId}</span>
+            <button 
+              onClick={() => navigator.clipboard.writeText(streamId)}
+              className="text-blue-400 hover:text-blue-300"
+            >
+              Copy
+            </button>
+          </div>
+          <button
+            onClick={() => setShowQR(true)}
+            className="bg-purple-500 px-4 py-2 rounded flex items-center gap-2"
+          >
+            <FiShare2 /> Share Stream
+          </button>
+        </div>
+      )}
+
     {/* Left Panel */}
     <div className="flex-1 flex flex-col p-6 space-y-6">
+      
+      {/* MOD: Wallet connect button */}
+        <div className="mb-4">
+          {!connected ? (
+            <WalletMultiButton />
+          ) : (
+            <span className="px-3 py-1 bg-green-600 rounded">
+              Connected: {publicKey?.toString().slice(0, 6)}…{" "}
+              {publicKey?.toString().slice(-4)}
+            </span>
+          )}
+        </div>
+
+
       {/* Title & Stats */}
       <div className="flex justify-between items-center">
         <div className="flex-1 space-y-2">
@@ -240,15 +378,13 @@ const StreamerStudio: React.FC = () => {
           <div className="flex items-center space-x-2">
             <FiClock />
             <span>
-              {new Date(streamDuration * 1000)
-                .toISOString()
-                .substr(11, 8)}
-            </span>
+                {new Date(streamDuration * 1000).toISOString().substr(11, 8)}
+              </span>
           </div>
         </div>
       </div>
 
-      {/* Video Preview */}
+      {/* Video Preview (unchanged) */}
       <div className="relative flex-1 bg-black rounded-xl overflow-hidden">
         <video
           ref={videoRef}
@@ -286,24 +422,38 @@ const StreamerStudio: React.FC = () => {
         </div>
       </div>
 
-      {/* Controls */}
-      <div className="flex justify-between items-center">
-        <div className="flex space-x-4">
-          <button
-            onClick={toggleStream}
-            className={`flex items-center space-x-2 px-6 py-3 rounded-full font-bold ${
-              isStreaming ? "bg-red-500" : "bg-green-500"
-            }`}
-          >
-            {isStreaming ? (
-              <>
-                <span>End Stream</span>
-                <div className="w-3 h-3 bg-white rounded-full animate-pulse" />
-              </>
-            ) : (
-              "Go Live"
-            )}
-          </button>
+        {/* Controls */}
+        <div className="flex justify-between items-center">
+          <div className="flex space-x-4">
+            {/* MOD: Restart server + Go Live */}
+            <button
+              onClick={handleGoLive}
+              disabled={isRestarting}
+              className={`go-live-btn ${
+                isRestarting ? "restarting" : ""
+              } px-6 py-3 rounded-full font-bold`}
+            >
+              {isRestarting ? "Restarting Server..." : "Restart + Go Live"}
+            </button>
+
+            {/* MOD: separate Start/Stop stream button */}
+            <button
+              onClick={toggleStream}
+              className={`flex items-center space-x-2 px-6 py-3 rounded-full font-bold ${
+                isStreaming ? "bg-red-500" : "bg-green-500"
+              }`}
+            >
+              {isStreaming ? (
+                <>
+                  <span>End Stream</span>
+                  <div className="w-3 h-3 bg-white rounded-full animate-pulse" />
+                </>
+              ) : (
+                "Start Stream"
+              )}
+            </button>
+
+            {/* Mute / Camera toggles (unchanged) */}
           <button
             onClick={() => setIsMuted((m) => !m)}
             className={`p-3 rounded-full ${

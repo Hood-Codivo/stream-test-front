@@ -2,52 +2,43 @@ import Button from "../components/ui/button";
 import { Search, Menu, Bell, Wallet } from "lucide-react";
 import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import {
-  connectWallet,
-  disconnectWallet,
-  getCurrentWallet,
-} from "../utils/walletConnection";
+import { useWallet } from '@solana/wallet-adapter-react';
+import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 
 const Navbar = () => {
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [walletConnected, setWalletConnected] = useState(false);
+  const { publicKey, disconnect } = useWallet();
   const [walletAddress, setWalletAddress] = useState("");
 
+   // Update wallet address when public key changes
   useEffect(() => {
-    const wallet = getCurrentWallet();
-    if (wallet) {
-      setWalletConnected(true);
-      setWalletAddress(wallet.address);
-    }
-  }, []);
-
-  const handleConnectWallet = async () => {
-    const wallet = await connectWallet();
-    if (wallet) {
-      setWalletConnected(true);
-      setWalletAddress(wallet.address);
-    }
-    return wallet; // Return the wallet so we can check if it exists
-  };
-
-  const handleDisconnectWallet = () => {
-    disconnectWallet();
-    setWalletConnected(false);
-    setWalletAddress("");
-  };
-
-  const goToStudio = async () => {
-    if (walletConnected) {
-      navigate("/studio");
+    if (publicKey) {
+      setWalletAddress(publicKey.toBase58());
     } else {
-      // If wallet not connected, connect first then navigate
-      const wallet = await handleConnectWallet();
-      if (wallet) {
-        navigate("/studio");
-      }
+      setWalletAddress("");
+    }
+  }, [publicKey]);
+  
+  const handleDisconnect = async () => {
+    try {
+      await disconnect();
+      navigate("/"); // Optional: Redirect after disconnect
+    } catch (error) {
+      console.error("Error disconnecting wallet:", error);
     }
   };
+
+  const goToStudio = () => {
+    if (publicKey) {
+      navigate("/studio");
+    }
+  };
+
+
+
+
+ 
 
   return (
     <nav className="sticky top-0 z-50 backdrop-blur-md bg-background/90 border-b border-border">
@@ -80,14 +71,14 @@ const Navbar = () => {
               >
                 Following
               </Link>
-              {walletConnected && (
+              {/* {walletConnected && (
                 <Link
                   to="/studio"
                   className="text-sm font-medium hover:text-primary transition-colors"
                 >
                   Studio
                 </Link>
-              )}
+              )} */}
             </div>
           </div>
 
@@ -106,34 +97,38 @@ const Navbar = () => {
               <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-primary"></span>
             </Button>
 
-            {walletConnected ? (
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={goToStudio}
-                  className="text-primary border-primary"
-                >
-                  Go Live
-                </Button>
-                <Button
-                  onClick={handleDisconnectWallet}
-                  variant="outline"
-                  className="flex items-center gap-2"
-                >
-                  <Wallet className="h-4 w-4" />
-                  {walletAddress}
-                </Button>
-              </div>
-            ) : (
-              <Button
-                onClick={handleConnectWallet}
-                className="bg-gradient-to-r from-primary to-accent hover:opacity-90"
+            <div className="flex items-center gap-2">
+              {publicKey && (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={goToStudio}
+                    className="text-primary border-primary"
+                  >
+                    Go Live
+                  </Button>
+                  <Button
+                    onClick={handleDisconnect}
+                    variant="outline"
+                    className="flex items-center gap-2"
+                  >
+                    <Wallet className="h-4 w-4" />
+                    {`${walletAddress.slice(0, 4)}...${walletAddress.slice(-4)}`}
+                  </Button>
+                </>
+              )}
+              <WalletMultiButton 
+                className="!bg-gradient-to-r !from-primary !to-accent hover:!opacity-90 !rounded-full !px-4 !py-2 !text-sm"
+                startIcon={<Wallet className="h-4 w-4 mr-2" />}
               >
-                <Wallet className="h-4 w-4 mr-2" />
-                Connect Wallet
-              </Button>
-            )}
+                {publicKey ? (
+                  `${walletAddress.slice(0, 4)}...${walletAddress.slice(-4)}`
+                ) : (
+                  "Connect Wallet"
+                )}
+              </WalletMultiButton>
+            </div>
           </div>
 
           <Button
@@ -169,14 +164,14 @@ const Navbar = () => {
             >
               Following
             </Link>
-            {walletConnected && (
+            {/* {walletConnected && (
               <Link
                 to="/studio"
                 className="text-sm font-medium hover:text-primary transition-colors"
               >
                 Studio
               </Link>
-            )}
+            )} */}
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
               <input
@@ -185,32 +180,36 @@ const Navbar = () => {
                 className="bg-muted rounded-full pl-10 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary w-full"
               />
             </div>
-            {walletConnected ? (
-              <div className="flex flex-col gap-2">
-                <Button
-                  onClick={goToStudio}
-                  className="text-primary border-primary"
-                >
-                  Go Live
-                </Button>
-                <Button
-                  onClick={handleDisconnectWallet}
-                  variant="outline"
-                  className="flex items-center justify-center gap-2"
-                >
-                  <Wallet className="h-4 w-4" />
-                  {walletAddress}
-                </Button>
-              </div>
-            ) : (
-              <Button
-                onClick={handleConnectWallet}
-                className="bg-gradient-to-r from-primary to-accent hover:opacity-90 w-full"
+           <div className="flex flex-col gap-2">
+              {publicKey && (
+                <>
+                      <Button
+                        onClick={goToStudio}
+                        className="text-primary border-primary"
+                      >
+                        Go Live
+                      </Button>
+                      <Button
+                        onClick={handleDisconnect}
+                        variant="outline"
+                        className="flex items-center justify-center gap-2"
+                      >
+                        <Wallet className="h-4 w-4" />
+                        {`${walletAddress.slice(0, 4)}...${walletAddress.slice(-4)}`}
+                      </Button>
+                    </>
+              )}
+              <WalletMultiButton 
+                className="w-full !bg-gradient-to-r !from-primary !to-accent hover:!opacity-90 !rounded-full !px-4 !py-2 !text-sm"
+                startIcon={<Wallet className="h-4 w-4 mr-2" />}
               >
-                <Wallet className="h-4 w-4 mr-2" />
-                Connect Wallet
-              </Button>
-            )}
+                {publicKey ? (
+                  `${walletAddress.slice(0, 4)}...${walletAddress.slice(-4)}`
+                ) : (
+                  "Connect Wallet"
+                )}
+              </WalletMultiButton>
+            </div>
           </div>
         </div>
       )}

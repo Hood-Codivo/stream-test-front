@@ -1,22 +1,16 @@
 // src/App.tsx (Updated for react-router-dom v6)
 // Use Routes, correct import paths
-import { Routes, Route, Link } from "react-router-dom";
+import { Routes, Route} from "react-router-dom";
 import StreamerStudio from "./components/StreamerStudio"
 import ViewerPage from "./components/ViewerPage"; // Corrected path and name
+import Navbar from "./components/Navbar";
 
 function App() {
   return (
     // Remove outer Router if it's in main.tsx
     <>
       <nav>
-        <ul>
-          <li>
-            <Link to="/broadcaster">Broadcaster</Link>
-          </li>
-          <li>
-            <Link to="/viewer">Viewer</Link>
-          </li>
-        </ul>
+        <Navbar />
       </nav>
       {/* Use Routes instead of Switch */}
       <Routes>

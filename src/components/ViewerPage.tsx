@@ -1,6 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import { io, Socket } from "socket.io-client";
 import { FiHeart, FiShare2, FiMessageSquare, FiMaximize, FiUser, FiX } from "react-icons/fi";
+import { restartRenderService } from '../utils/renderApi';
+import { useWallet } from "@solana/wallet-adapter-react";
+import { useParams } from "react-router-dom";
+import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 
 // Add type definitions
 type Donation = {
@@ -64,26 +68,84 @@ const ICE_SERVERS: RTCIceServer[] = (() => {
 })();
 
 const ViewerPage: React.FC = () => {
+
+   // MOD: only need `connected` here; `publicKey` was never used
+  const { connected } = useWallet(); 
+   
+  const { streamId } = useParams()
+  const [accessGranted, setAccessGranted] = useState(false)
+
+
+  // REFS
   const videoRef = useRef<HTMLVideoElement>(null);
   const socketRef = useRef<Socket | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const [connectionStatus, setConnectionStatus] = React.useState("Connecting...");
 
+
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [newMessage, setNewMessage] = useState("");
+  const [likes, setLikes] = useState(0);
+  const [viewerCount, setViewerCount] = useState(0);
+   const [donations, setDonations] = useState<Donation[]>([]); // Add donations state
+
+  // Add these new state variables
+  const [isChatVisible, setIsChatVisible] = useState(true);
+  const [isTheaterMode, setIsTheaterMode] = useState(false);
+
+    const [isJoining, setIsJoining] = useState(false);
+
+  // Validate access on mount
+  useEffect(() => {
+    if (!streamId) return;
+    socketRef.current?.emit(
+      "joinStream",
+      streamId,
+      (response: { success: boolean }) => {
+        if (response.success) {
+          setAccessGranted(true);
+        } else {
+          setAccessGranted(false);
+        }
+      }
+    );
+  }, [streamId]);
+
+
+  useEffect(() => {
+    const verifyAccess = async () => {
+      if (streamId) {
+        socketRef.current?.emit('joinStream', streamId, (response: any) => {
+          if (response.success) {
+            setAccessGranted(true)
+            // Proceed with normal viewer flow
+          } else {
+            // Handle access denied
+          }
+        })
+      }
+    }
+
+    verifyAccess()
+  }, [streamId])
+
+
+  // Main signaling & donation/viewerUpdate listeners
   useEffect(() => {
     const socket = createSocket(getSocketUrl());
     socketRef.current = socket;
 
     // Add donation listener
-  socket.on("donation", (donation: Donation) => {
-    setDonations(prev => [...prev, donation]);
-  });
+    socket.on("donation", (donation: Donation) => {
+      setDonations(prev => [...prev, donation]);
+    });
 
     socket.on("viewerUpdate", (count: number) => {
       setViewerCount(count);
     });
 
     const handleOffer = async (id: string, description: RTCSessionDescriptionInit) => {
-      try {
+      // try {
         console.log("[Signal] offer received from", id, description);
         setConnectionStatus("Negotiating connection...");
 
@@ -130,6 +192,7 @@ const ViewerPage: React.FC = () => {
           }
         };
 
+        try {
         // Set remote description and create answer
         await pc.setRemoteDescription(description);
         console.log("[PC] Remote description set");
@@ -181,15 +244,30 @@ const ViewerPage: React.FC = () => {
   }, []);
 
 
-   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  const [newMessage, setNewMessage] = useState("");
-  const [likes, setLikes] = useState(0);
-  const [viewerCount, setViewerCount] = useState(0);
-   const [donations, setDonations] = useState<Donation[]>([]); // Add donations state
-
-  // Add these new state variables
-  const [isChatVisible, setIsChatVisible] = useState(true);
-  const [isTheaterMode, setIsTheaterMode] = useState(false);
+ 
+    /**
+   * Handles joining a stream with server restart
+   */
+  const handleJoinStream = async (streamId: any) => {
+    setIsJoining(true);
+    
+    try {
+      // 1. Restart server first
+      await restartRenderService(import.meta.env.RENDER_VIEWER_SERVICE_ID);
+      
+      // 2. Then connect to stream
+      socketRef.current?.emit('joinStream', streamId, (response: any) => {
+        if (response.success) {
+          // Proceed with viewer connection
+        }
+      });
+      
+    } catch (error) {
+      console.error('Join Stream failed:', error);
+    } finally {
+      setIsJoining(false);
+    }
+  };
 
    // Add chat toggle handler
   const toggleChat = () => {
@@ -204,12 +282,32 @@ useEffect(() => {
   return () => clearInterval(timer);
 }, []);
 
+
+  if (!accessGranted) {
   return (
+    <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+        <div className="text-center">
+          <h1 className="text-2xl mb-4">Stream Access Required</h1>
+          <WalletMultiButton />
+          {connected && (
+            <p className="mt-4 text-red-400">
+              Connected wallet doesn't have access to this stream
+            </p>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // ——— MOD: add this `return` and remove the extra `}` above ———
+return (
     <div className="min-h-screen bg-gray-900 text-white relative">
       {/* Main Content Area */}
       <div className={`flex ${isTheaterMode ? 'h-screen' : 'min-h-screen'}`}>
         {/* Video Container */}
         <div className={`relative ${isChatVisible ? 'flex-1' : 'w-full'} bg-black`}>
+
+          {/* Top bar */}
           <div className="absolute top-0 left-0 right-0 z-10 p-4 bg-gradient-to-b from-black/60 to-transparent">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-4">
@@ -245,11 +343,17 @@ useEffect(() => {
           <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/60 to-transparent">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-4">
-                <button 
-                  onClick={() => setLikes(prev => prev + 1)}
-                  className="flex items-center space-x-2 hover:bg-white/10 px-4 py-2 rounded-full transition-colors"
+                <button
+                  onClick={() => handleJoinStream(streamId)}
+                  disabled={isJoining}
+                  >
+                  {isJoining ? 'Restarting Server...' : 'Join Stream'}
+                </button>
+                <button
+                  onClick={() => setLikes((l) => l + 1)}
+                  className="flex items-center space-x-2 hover:bg-white/10 px-4 py-2 rounded-full"
                 >
-                  <FiHeart className="w-6 h-6" />
+                  <FiHeart />
                   <span>{likes}</span>
                 </button>
                 <button className="p-2 hover:bg-white/10 rounded-full transition-colors">
@@ -301,11 +405,11 @@ useEffect(() => {
                 />
                 <button 
                   onClick={() => {
-                    if (newMessage.trim()) {
-                      setChatMessages(prev => [...prev, {
-                        user: "Viewer",
-                        message: newMessage.trim()
-                      }]);
+                     if (newMessage.trim()) {
+                      setChatMessages((prev) => [
+                        ...prev,
+                        { user: "Viewer", message: newMessage.trim() },
+                      ]);
                       setNewMessage("");
                     }
                   }}
@@ -320,14 +424,15 @@ useEffect(() => {
       </div>
 
       {/* Floating Donation Alert */}
+      {/* Floating Donation Alerts */}
       <div className="fixed bottom-4 right-4 space-y-2">
-       {donations.map((d: Donation, i: number) => (
+        {donations.map((d, i) => (
           <div
             key={i}
             className="animate-fadeInRight bg-gradient-to-r from-purple-500 to-blue-500 p-4 rounded-lg shadow-lg flex items-center space-x-3"
           >
             <div className="bg-white/10 p-2 rounded-full">
-              <FiHeart className="w-5 h-5" />
+              <FiHeart />
             </div>
             <div>
               <div className="font-semibold">🎉 ${d.amount}</div>
@@ -339,5 +444,6 @@ useEffect(() => {
     </div>
   );
 };
+
 
 export default ViewerPage;
