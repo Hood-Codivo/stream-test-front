@@ -77,6 +77,7 @@ const StreamerStudio: React.FC = () => {
   const [showQR, setShowQR] = useState(false);
   const [isRestarting, setIsRestarting] = useState(false);
 
+  // generate + persist a UUID
   const generateStreamId = () => {
     const id = uuidv4();
     setStreamId(id);

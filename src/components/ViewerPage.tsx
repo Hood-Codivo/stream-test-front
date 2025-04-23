@@ -25,7 +25,29 @@ function createSocket(url: string): Socket {
   return socket;
 }
 
-const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
+  // Determine the server URL
+const getSocketUrl = () => {
+  if (typeof window !== "undefined") {
+    return import.meta.env.VITE_SOCKET_SERVER_URL || window.location.origin;
+  }
+  return "https://stream-test-backend.onrender.com";
+};
+
+// Fallback to public STUN
+const ICE_SERVERS: RTCIceServer[] = (() => {
+  try {
+    return JSON.parse(import.meta.env.VITE_ICE_SERVERS || "[]");
+  } catch {
+    return [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" },
+      { urls: "stun:stun2.l.google.com:19302" }
+    ];
+  }
+})();
+
+
+// const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
 
 const ViewerPage: React.FC = () => {
   const { streamId } = useParams<{ streamId: string }>();
@@ -47,7 +69,7 @@ const ViewerPage: React.FC = () => {
 
   useEffect(() => {
     if (!streamId) return;
-    const socket = createSocket(import.meta.env.VITE_SOCKET_SERVER_URL || window.location.origin);
+    const socket = createSocket(getSocketUrl());
     socketRef.current = socket;
 
     socket.on("connect", () => {
@@ -64,51 +86,124 @@ const ViewerPage: React.FC = () => {
       });
     });
 
+
+
     socket.on("viewerUpdate", setViewerCount);
     socket.on("donation", (d) => setDonations((ds) => [...ds, d]));
 
     const handleOffer = async (id: string, desc: RTCSessionDescriptionInit) => {
       console.log("handleOffer received for id:", id);
       try {
+        if (!streamId) {
+      throw new Error('Missing stream ID');
+      }
         pcRef.current?.close();
-        const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+
+
+        const pc = new RTCPeerConnection({
+          iceServers: ICE_SERVERS,
+          iceTransportPolicy: "all",
+          bundlePolicy: "max-bundle",
+          rtcpMuxPolicy: "require"
+        });
+        // const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
         pcRef.current = pc;
-        pc.onicecandidate = (e) => e.candidate && socket.emit("candidate", id, e.candidate);
-        pc.ontrack = (e) => {
-          console.log("pc.ontrack event:", e);
-          if (videoRef.current) {
-            videoRef.current.srcObject = e.streams[0];
-            videoRef.current
-              .play()
-              .catch(() => setConnectionStatus("Click to play"));
+
+        // Add data channel for metadata
+        const dc = pc.createDataChannel('metadata');
+        dc.onmessage = (e) => console.log('Metadata:', e.data);
+
+        // ICE Candidate handling
+        pc.onicecandidate = ({ candidate }) => {
+          if (candidate) {
+            console.log("[PC] Sending ICE candidate:", candidate);
+            socket.emit("candidate", id, candidate);
           }
         };
+
+        // pc.onicecandidate = (e) => e.candidate && socket.emit("candidate", id, e.candidate);
+
+        // pc.ontrack = (e) => {
+        //   console.log("pc.ontrack event:", e);
+        //   if (videoRef.current) {
+        //     videoRef.current.srcObject = e.streams[0];
+        //     videoRef.current
+        //       .play()
+        //       .catch(() => setConnectionStatus("Click to play"));
+        //   }
+        // };
+
+         // Track handling
+        pc.ontrack = (event) => {
+          console.log("[PC] Received media track:", event.track.kind);
+          if (videoRef.current && event.streams[0]) {
+            const videoElement = videoRef.current;
+            videoElement.srcObject = event.streams[0];
+            videoElement.play().catch(err => {
+              console.error("Autoplay failed:", err);
+              setConnectionStatus("Click to start playback");
+            });
+          }
+        };
+
+
+      // ICE Connection monitoring
         pc.oniceconnectionstatechange = () => {
-          const state = pc.iceConnectionState;
-          setConnectionStatus(state);
-          if (state === "failed") {
-            console.log("ICE Connection failed, requesting new offer");
-            socket.emit("watcher");
+          console.log("[PC] ICE state:", pc.iceConnectionState);
+          setConnectionStatus(pc.iceConnectionState);
+          if (pc.iceConnectionState === "failed") {
+            pc.restartIce();
           }
         };
+
+        // Set remote description and create answer
         await pc.setRemoteDescription(desc);
-        const ans = await pc.createAnswer();
-        await pc.setLocalDescription(ans);
+        console.log("[PC] Remote description set");
+
+        const answer = await pc.createAnswer({
+          offerToReceiveAudio: true,
+          offerToReceiveVideo: true
+        });
+        
+        await pc.setLocalDescription(answer);
+        console.log("[PC] Local description set");
+        
         socket.emit("answer", id, pc.localDescription);
-      } catch (error) {
-        console.error("Error in handleOffer:", error);
-        setConnectionStatus("Error");
+        setConnectionStatus("Connected - negotiating media");
+
+      } catch (err) {
+        console.error("[PC] Offer handling failed:", err);
+        setConnectionStatus("Connection failed");
       }
     };
+    const handleCandidate = (_id: string, candidate: RTCIceCandidateInit) => {
+      console.log("[Signal] Received ICE candidate:", candidate);
+      pcRef.current?.addIceCandidate(new RTCIceCandidate(candidate))
+        .catch(err => console.error("[PC] addIceCandidate error:", err));
+    };
+
+    // Setup listeners
+    socket.on("broadcaster", () => {
+      console.log("[Signal] Broadcaster detected");
+      socket.emit("watcher");
+      setConnectionStatus("Broadcaster found");
+    });
+
 
     socket.on("broadcaster", () => socket.emit("watcher"));
     socket.on("offer", handleOffer);
     socket.on("candidate", (_id, c) => pcRef.current?.addIceCandidate(new RTCIceCandidate(c)));
 
     return () => {
+      console.log("[Cleanup] Disconnecting...");
+      socket.off("broadcaster");
+      socket.off("offer", handleOffer);
+      socket.off("candidate", handleCandidate);
       socket.disconnect();
       pcRef.current?.close();
+      setConnectionStatus("Disconnected");
     };
+
   }, [streamId]);
 
   useEffect(() => {
@@ -171,9 +266,17 @@ const ViewerPage: React.FC = () => {
             muted  // added muted for autoplay policy
             className="w-full h-full object-contain"
             onClick={() => videoRef.current?.play()}
+            onCanPlay={() => {
+          console.log("Video ready to play");
+          videoRef.current?.play().catch(console.error);
+        }}
+        onError={(e) => {
+          console.error("Video error:", e.nativeEvent);
+          setConnectionStatus("Video playback error");
+        }}
           />
           <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/60 to-transparent flex justify-between items-center">
-            <button onClick={rejoin} disabled={isJoining} className="px-4 py-2 bg-gray-700 rounded cursor-pointer">
+            <button onClick={rejoin} disabled={isJoining} className="px-4 py-2 bg-gray-700 rounded hover:bg-gray-300 cursor-pointer">
               {isJoining ? "Rejoining…" : "Rejoin"}
             </button>
             <div className="flex items-center space-x-4">
