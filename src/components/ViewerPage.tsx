@@ -18,10 +18,10 @@ function createSocket(url: string): Socket {
     reconnectionDelayMax: 5000,
   });
   socket.on("connect", () => console.log("Socket connected:", socket.id));
-  socket.on("connect_error", (err) => console.error("Socket connect_error:", err));  // added for error monitoring
-  socket.on("error", (err) => console.error("Socket error:", err));  // added for error monitoring
-  socket.on("disconnect", (reason) => console.warn("Socket disconnected:", reason));  // added for error monitoring
-  socket.on("reconnect_attempt", (attempt) => console.log("Socket reconnect_attempt:", attempt));  // added for debug
+  socket.on("connect_error", (err) => console.error("Socket connect_error:", err));
+  socket.on("error", (err) => console.error("Socket error:", err));
+  socket.on("disconnect", (reason) => console.warn("Socket disconnected:", reason));
+  socket.on("reconnect_attempt", (attempt) => console.log("Socket reconnect_attempt:", attempt));
   return socket;
 }
 
@@ -29,7 +29,7 @@ const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
 
 const ViewerPage: React.FC = () => {
   const { streamId } = useParams<{ streamId: string }>();
-  const [accessGranted, setAccessGranted] = useState(false);
+  const [hasStreamAccess, setHasStreamAccess] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
   const [showQRCode, setShowQRCode] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState("Connecting…");
@@ -51,15 +51,15 @@ const ViewerPage: React.FC = () => {
     socketRef.current = socket;
 
     socket.on("connect", () => {
-      console.log("Socket connected (useEffect):", socket.id);  // added debug log
+      console.log("Socket connected (useEffect):", socket.id);
       socket.emit("joinStream", streamId, (res: { success: boolean }) => {
-        console.log("joinStream ack on connect:", res);  // added debug log
-        setAccessGranted(res.success);
+        console.log("joinStream ack on connect:", res);
+        setHasStreamAccess(res.success);
         if (res.success) {
-          console.log("Access granted, emitting watcher");  // added to trigger watcher
-          socket.emit("watcher");  // added to request offer
+          console.log("Access granted, emitting watcher");
+          socket.emit("watcher");
         } else {
-          console.error("Access denied on initial join");  // added error log
+          console.error("Access denied on initial join");
         }
       });
     });
@@ -68,14 +68,14 @@ const ViewerPage: React.FC = () => {
     socket.on("donation", (d) => setDonations((ds) => [...ds, d]));
 
     const handleOffer = async (id: string, desc: RTCSessionDescriptionInit) => {
-      console.log("handleOffer received for id:", id);  // added debug log
+      console.log("handleOffer received for id:", id);
       try {
         pcRef.current?.close();
         const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
         pcRef.current = pc;
         pc.onicecandidate = (e) => e.candidate && socket.emit("candidate", id, e.candidate);
         pc.ontrack = (e) => {
-          console.log("pc.ontrack event:", e);  // added debug log
+          console.log("pc.ontrack event:", e);
           if (videoRef.current) {
             videoRef.current.srcObject = e.streams[0];
             videoRef.current
@@ -84,16 +84,20 @@ const ViewerPage: React.FC = () => {
           }
         };
         pc.oniceconnectionstatechange = () => {
-          setConnectionStatus(pc.iceConnectionState);
-          if (pc.iceConnectionState === "failed") pc.restartIce();
+          const state = pc.iceConnectionState;
+          setConnectionStatus(state);
+          if (state === "failed") {
+            console.log("ICE Connection failed, requesting new offer");
+            socket.emit("watcher");
+          }
         };
         await pc.setRemoteDescription(desc);
-        const ans = await pc.createAnswer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
+        const ans = await pc.createAnswer();
         await pc.setLocalDescription(ans);
         socket.emit("answer", id, pc.localDescription);
       } catch (error) {
-        console.error("Error in handleOffer:", error);  // added error log
-        setConnectionStatus("Error");  // added to update UI on error
+        console.error("Error in handleOffer:", error);
+        setConnectionStatus("Error");
       }
     };
 
@@ -107,29 +111,32 @@ const ViewerPage: React.FC = () => {
     };
   }, [streamId]);
 
-  // auto‑clear donations
   useEffect(() => {
     const t = setInterval(() => setDonations((d) => d.slice(1)), 5000);
     return () => clearInterval(t);
   }, []);
 
   const rejoin = () => {
-    console.log("Rejoin clicked for stream:", streamId);  // added debug log
+    console.log("Rejoin clicked for stream:", streamId);
     setIsJoining(true);
     socketRef.current?.emit("joinStream", streamId, (res: { success: boolean }) => {
-      console.log("joinStream ack on rejoin:", res);  // added debug log
-      setAccessGranted(res.success);
+      console.log("joinStream ack on rejoin:", res);
+      setHasStreamAccess(res.success);
       if (res.success) {
-        console.log("Rejoin successful, emitting watcher");  // added to trigger watcher
-        socketRef.current?.emit("watcher");  // added
+        console.log("Rejoin successful, emitting watcher");
+        socketRef.current?.emit("watcher");
       } else {
-        console.error("Rejoin failed: access denied");  // added error log
+        console.error("Rejoin failed: access denied");
       }
-      setIsJoining(false);  // moved inside callback for accurate loading state
+      setIsJoining(false);
     });
   };
 
-  if (!accessGranted) {
+  const shareUrl = `${window.location.origin}/viewers/${streamId}`;  // fixed template literal for URL
+  console.log("Share URL:", shareUrl);  // added debug log
+
+  // Update conditional rendering:
+  if (!hasStreamAccess) {
     return (
       <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
         <button
@@ -142,9 +149,6 @@ const ViewerPage: React.FC = () => {
       </div>
     );
   }
-
-  const shareUrl = `${window.location.origin}/viewers/${streamId}`;  // fixed template literal for URL
-  console.log("Share URL:", shareUrl);  // added debug log
 
   return (
     <div className="relative min-h-screen bg-gray-900 text-white">
