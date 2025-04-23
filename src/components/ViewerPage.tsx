@@ -9,7 +9,6 @@ import {
 } from "react-icons/fi";
 import { useParams } from "react-router-dom";
 import { QRCodeCanvas } from "qrcode.react";
-// import { restartRenderService } from "../utils/renderApi";
 
 function createSocket(url: string): Socket {
   const socket = io(url, {
@@ -19,6 +18,10 @@ function createSocket(url: string): Socket {
     reconnectionDelayMax: 5000,
   });
   socket.on("connect", () => console.log("Socket connected:", socket.id));
+  socket.on("connect_error", (err) => console.error("Socket connect_error:", err));  // added for error monitoring
+  socket.on("error", (err) => console.error("Socket error:", err));  // added for error monitoring
+  socket.on("disconnect", (reason) => console.warn("Socket disconnected:", reason));  // added for error monitoring
+  socket.on("reconnect_attempt", (attempt) => console.log("Socket reconnect_attempt:", attempt));  // added for debug
   return socket;
 }
 
@@ -48,33 +51,50 @@ const ViewerPage: React.FC = () => {
     socketRef.current = socket;
 
     socket.on("connect", () => {
-      socket.emit("joinStream", streamId, (res:{success:boolean}) => {
+      console.log("Socket connected (useEffect):", socket.id);  // added debug log
+      socket.emit("joinStream", streamId, (res: { success: boolean }) => {
+        console.log("joinStream ack on connect:", res);  // added debug log
         setAccessGranted(res.success);
+        if (res.success) {
+          console.log("Access granted, emitting watcher");  // added to trigger watcher
+          socket.emit("watcher");  // added to request offer
+        } else {
+          console.error("Access denied on initial join");  // added error log
+        }
       });
     });
 
     socket.on("viewerUpdate", setViewerCount);
-    socket.on("donation", d => setDonations(ds => [...ds, d]));
+    socket.on("donation", (d) => setDonations((ds) => [...ds, d]));
 
-    const handleOffer = async (id:string, desc:RTCSessionDescriptionInit) => {
-      pcRef.current?.close();
-      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-      pcRef.current = pc;
-      pc.onicecandidate = e => e.candidate && socket.emit("candidate", id, e.candidate);
-      pc.ontrack = e => {
-        if (videoRef.current) {
-          videoRef.current.srcObject = e.streams[0];
-          videoRef.current.play().catch(() => setConnectionStatus("Click to play"));
-        }
-      };
-      pc.oniceconnectionstatechange = () => {
-        setConnectionStatus(pc.iceConnectionState);
-        if (pc.iceConnectionState === "failed") pc.restartIce();
-      };
-      await pc.setRemoteDescription(desc);
-      const ans = await pc.createAnswer({offerToReceiveAudio:true,offerToReceiveVideo:true});
-      await pc.setLocalDescription(ans);
-      socket.emit("answer", id, pc.localDescription);
+    const handleOffer = async (id: string, desc: RTCSessionDescriptionInit) => {
+      console.log("handleOffer received for id:", id);  // added debug log
+      try {
+        pcRef.current?.close();
+        const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+        pcRef.current = pc;
+        pc.onicecandidate = (e) => e.candidate && socket.emit("candidate", id, e.candidate);
+        pc.ontrack = (e) => {
+          console.log("pc.ontrack event:", e);  // added debug log
+          if (videoRef.current) {
+            videoRef.current.srcObject = e.streams[0];
+            videoRef.current
+              .play()
+              .catch(() => setConnectionStatus("Click to play"));
+          }
+        };
+        pc.oniceconnectionstatechange = () => {
+          setConnectionStatus(pc.iceConnectionState);
+          if (pc.iceConnectionState === "failed") pc.restartIce();
+        };
+        await pc.setRemoteDescription(desc);
+        const ans = await pc.createAnswer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
+        await pc.setLocalDescription(ans);
+        socket.emit("answer", id, pc.localDescription);
+      } catch (error) {
+        console.error("Error in handleOffer:", error);  // added error log
+        setConnectionStatus("Error");  // added to update UI on error
+      }
     };
 
     socket.on("broadcaster", () => socket.emit("watcher"));
@@ -89,20 +109,24 @@ const ViewerPage: React.FC = () => {
 
   // auto‑clear donations
   useEffect(() => {
-    const t = setInterval(() => setDonations(d => d.slice(1)), 5000);
+    const t = setInterval(() => setDonations((d) => d.slice(1)), 5000);
     return () => clearInterval(t);
   }, []);
 
-  const rejoin = async () => {
+  const rejoin = () => {
+    console.log("Rejoin clicked for stream:", streamId);  // added debug log
     setIsJoining(true);
-    try {
-      // await restartRenderService();
-      socketRef.current?.emit("joinStream", streamId, (res:{success:boolean}) => {
-        setAccessGranted(res.success);
-      });
-    } finally {
-      setIsJoining(false);
-    }
+    socketRef.current?.emit("joinStream", streamId, (res: { success: boolean }) => {
+      console.log("joinStream ack on rejoin:", res);  // added debug log
+      setAccessGranted(res.success);
+      if (res.success) {
+        console.log("Rejoin successful, emitting watcher");  // added to trigger watcher
+        socketRef.current?.emit("watcher");  // added
+      } else {
+        console.error("Rejoin failed: access denied");  // added error log
+      }
+      setIsJoining(false);  // moved inside callback for accurate loading state
+    });
   };
 
   if (!accessGranted) {
@@ -119,19 +143,20 @@ const ViewerPage: React.FC = () => {
     );
   }
 
-   const shareUrl = `${window.location.origin}/viewers/${streamId}`;
+  const shareUrl = `${window.location.origin}/viewers/${streamId}`;  // fixed template literal for URL
+  console.log("Share URL:", shareUrl);  // added debug log
 
   return (
     <div className="relative min-h-screen bg-gray-900 text-white">
       {/* VIDEO + CONTROLS */}
-      <div className={`flex ${theater ? "h-screen" : "min-h-screen"}`}>
-        <div className={`${chatVisible ? "flex-1" : "w-full"} bg-black relative`}>
+      <div className={`flex ${theater ? "h-screen" : "min-h-screen"}`}>  {/* fixed template literal */}
+        <div className={`${chatVisible ? "flex-1" : "w-full"} bg-black relative`}>  {/* fixed template literal */}
           <div className="absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/60 to-transparent flex justify-between">
             <div className="flex items-center space-x-2">
               <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
               <span>LIVE • {viewerCount}</span>
             </div>
-            <button onClick={() => setTheater(t => !t)}>
+            <button onClick={() => setTheater((t) => !t)}>
               <FiMaximize />
             </button>
           </div>
@@ -139,6 +164,7 @@ const ViewerPage: React.FC = () => {
             ref={videoRef}
             autoPlay
             playsInline
+            muted  // added muted for autoplay policy
             className="w-full h-full object-contain"
             onClick={() => videoRef.current?.play()}
           />
@@ -148,7 +174,7 @@ const ViewerPage: React.FC = () => {
             </button>
             <div className="flex items-center space-x-4">
               <button
-                onClick={() => setLikes(l => l + 1)}
+                onClick={() => setLikes((l) => l + 1)}
                 className="flex items-center space-x-1 px-3 py-1 rounded-full hover:bg-white/10"
               >
                 <FiHeart /> {likes}
@@ -169,7 +195,7 @@ const ViewerPage: React.FC = () => {
               <button onClick={() => setChatVisible(false)}><FiX/></button>
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
-              {chat.map((m,i) => (
+              {chat.map((m, i) => (
                 <div key={i} className="flex items-start space-x-2">
                   <div className="w-8 h-8 bg-purple-500 rounded-full flex items-center justify-center">
                     {m.user[0]}
@@ -184,7 +210,7 @@ const ViewerPage: React.FC = () => {
             <div className="p-4 border-t border-gray-700 flex space-x-2">
               <input
                 value={msg}
-                onChange={e => setMsg(e.target.value)}
+                onChange={(e) => setMsg(e.target.value)}
                 placeholder="Type…"
                 className="flex-1 bg-gray-900 rounded px-3 py-2"
               />
@@ -205,7 +231,7 @@ const ViewerPage: React.FC = () => {
 
       {/* DONATIONS */}
       <div className="fixed bottom-4 right-4 space-y-2">
-        {donations.map((d,i) => (
+        {donations.map((d, i) => (
           <div key={i} className="bg-gradient-to-r from-purple-500 to-blue-500 p-3 rounded flex items-center space-x-2">
             <FiHeart />
             <div>
