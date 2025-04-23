@@ -119,7 +119,7 @@ const ViewerPage: React.FC = () => {
     );
   }
 
-  const shareUrl = `${window.location.origin}/view/${streamId}`;
+   const shareUrl = `${window.location.origin}/viewers/${streamId}`;
 
   return (
     <div className="relative min-h-screen bg-gray-900 text-white">
@@ -143,7 +143,7 @@ const ViewerPage: React.FC = () => {
             onClick={() => videoRef.current?.play()}
           />
           <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/60 to-transparent flex justify-between items-center">
-            <button onClick={rejoin} disabled={isJoining} className="px-4 py-2 bg-gray-700 rounded">
+            <button onClick={rejoin} disabled={isJoining} className="px-4 py-2 bg-gray-700 rounded cursor-pointer">
               {isJoining ? "Rejoining…" : "Rejoin"}
             </button>
             <div className="flex items-center space-x-4">
@@ -153,7 +153,7 @@ const ViewerPage: React.FC = () => {
               >
                 <FiHeart /> {likes}
               </button>
-              <button onClick={() => setShowQRCode(true)} className="p-2 hover:bg-white/10 rounded-full">
+              <button onClick={() => setShowQRCode(true)} className="p-2 hover:bg-white/10 rounded-full cursor-pointer">
                 <FiShare2 />
               </button>
             </div>
@@ -194,7 +194,7 @@ const ViewerPage: React.FC = () => {
                   setChat([...chat, { user: "Guest", message: msg }]);
                   setMsg("");
                 }}
-                className="bg-purple-600 px-3 py-2 rounded"
+                className="bg-purple-600 px-3 py-2 rounded cursor-pointer"
               >
                 <FiMessageSquare />
               </button>
@@ -229,7 +229,7 @@ const ViewerPage: React.FC = () => {
             </p>
             <button
               onClick={() => setShowQRCode(false)}
-              className="mt-4 bg-red-500 text-white px-4 py-2 rounded"
+              className="mt-4 bg-red-500 text-white px-4 py-2 rounded cursor-pointer"
             >
               Close
             </button>

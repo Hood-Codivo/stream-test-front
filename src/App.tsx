@@ -16,7 +16,7 @@ function App() {
       <Routes>
         {/* Use element prop and remove exact */}
         <Route path="/broadcaster" element={<StreamerStudio />} />
-        <Route path="/viewer" element={<ViewerPage />} />
+        <Route path="/viewers/:streamId" element={<ViewerPage />} />
         <Route path="/" element={<h2>Welcome! Choose an option above.</h2>} />
       </Routes>
     </>

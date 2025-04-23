@@ -223,20 +223,25 @@ const StreamerStudio: React.FC = () => {
   //   }
   // };
 
-  const toggleStream = async () => {
-    if (!isStreaming) {
-      const streamId = generateStreamId()
-      await startStreaming()
-      socketRef.current?.emit('startStream', { 
-        streamId,
-        publicKey: publicKey?.toString(),
-        title: streamTitle,
-        description: streamDescription
-      })
-    } else {
-      stopStreaming()
-    }
-  }
+ const toggleStream = async () => {
+   if (!isStreaming) {
+     // 1️⃣ generate unique ID
+    const id = generateStreamId();
+
+     // 2️⃣ kick off your WebRTC + timer
+     await startStreaming();
+
+     // 3️⃣ tell the server about this stream
+     socketRef.current?.emit("startStream", {
+       streamId: id,
+       publicKey: publicKey?.toString(),
+       title: streamTitle,
+       description: streamDescription,
+     });
+   } else {
+     stopStreaming();
+   }
+ };
 
   const sendMessage = () => {
     if (!newMessage.trim()) return;
@@ -290,43 +295,58 @@ const StreamerStudio: React.FC = () => {
 
      {/* QR Code Modal & Stream ID Display (unchanged) */}
       {showQR && (
-        <div className="fixed inset-0 bg-black/75 flex items-center justify-center">
-          <div className="bg-white p-6 rounded-lg">
-            <h3 className="text-xl mb-4">Share Stream Access</h3>
-             {/* MOD: render QRCodeCanvas instead of default QRCode */}
-            <QRCodeCanvas value={`${window.location.origin}/view/${streamId}`} />
-            <div className="mt-4">
-              <button
-                onClick={() => setShowQR(false)}
-                className="bg-red-500 text-white px-4 py-2 rounded"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+  <div className="fixed inset-0 bg-black/75 flex items-center justify-center">
+    <div className="bg-white p-6 rounded-lg">
+      <h3 className="text-xl mb-4">Scan to Join</h3>
+      <QRCodeCanvas
+        value={`${window.location.origin}/viewers/${streamId}`}
+      />
+      <div className="mt-4">
+        <button
+          onClick={() => setShowQR(false)}
+          className="bg-red-500 text-white px-4 py-2 rounded"
+        >
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+
       {/*  */}
             {/* Add Access Code Display */}
       {isStreaming && (
         <div className="absolute top-20 right-4 bg-gray-800 p-4 rounded">
           <div className="flex items-center gap-2 mb-2">
-            <span>Stream ID: {streamId}</span>
-            <button 
-              onClick={() => navigator.clipboard.writeText(streamId)}
-              className="text-blue-400 hover:text-blue-300"
-            >
-              Copy
-            </button>
-          </div>
+            <span>Stream URL:</span>
+      {/* click/copy the full viewer URL */}
+      <a
+        href={`/viewers/${streamId}`}
+        target="_blank"
+        rel="noopener"
+        className="text-blue-400 underline hover:text-blue-300 cursor-pointer"
+      >
+        https://stream-test-front-kh6k.vercel.app/viewers/{streamId}
+      </a>
           <button
-            onClick={() => setShowQR(true)}
-            className="bg-purple-500 px-4 py-2 rounded flex items-center gap-2"
-          >
-            <FiShare2 /> Share Stream
-          </button>
-        </div>
-      )}
+        onClick={() =>
+          navigator.clipboard.writeText(
+            `${window.location.origin}/viewers/${streamId}`
+          )
+        }
+        className="text-blue-400 hover:text-blue-300 ml-2 cursor-pointer"
+      >
+        Copy
+      </button>
+    </div>
+    <button
+      onClick={() => setShowQR(true)}
+      className="bg-purple-500 px-4 py-2 rounded flex items-center gap-2 cursor-pointer"
+    >
+      <FiShare2 /> Share Stream
+    </button>
+  </div>
+)}
 
     {/* Left Panel */}
     <div className="flex-1 flex flex-col p-6 space-y-6">
@@ -336,7 +356,7 @@ const StreamerStudio: React.FC = () => {
           {!connected ? (
             <WalletMultiButton />
           ) : (
-            <span className="px-3 py-1 bg-green-600 rounded">
+            <span className="px-3 py-1 bg-green-600 rounded cursor-pointer">
               Connected: {publicKey?.toString().slice(0, 6)}…{" "}
               {publicKey?.toString().slice(-4)}
             </span>
@@ -431,7 +451,7 @@ const StreamerStudio: React.FC = () => {
               disabled={isRestarting}
               className={`go-live-btn ${
                 isRestarting ? "restarting" : ""
-              } px-6 py-3 rounded-full font-bold`}
+              } px-6 py-3 rounded-full font-bold cursor-pointer`}
             >
               {isRestarting ? "Restarting Server..." : "Restart + Go Live"}
             </button>
@@ -439,7 +459,7 @@ const StreamerStudio: React.FC = () => {
             {/* MOD: separate Start/Stop stream button */}
             <button
               onClick={toggleStream}
-              className={`flex items-center space-x-2 px-6 py-3 rounded-full font-bold ${
+              className={`flex items-center space-x-2 px-6 py-3 rounded-full cursor-pointer font-bold ${
                 isStreaming ? "bg-red-500" : "bg-green-500"
               }`}
             >
@@ -456,7 +476,7 @@ const StreamerStudio: React.FC = () => {
             {/* Mute / Camera toggles (unchanged) */}
           <button
             onClick={() => setIsMuted((m) => !m)}
-            className={`p-3 rounded-full ${
+            className={`p-3 cursor-pointer rounded-full ${
               isMuted ? "bg-red-500" : "bg-gray-700"
             }`}
           >
@@ -464,7 +484,7 @@ const StreamerStudio: React.FC = () => {
           </button>
           <button
             onClick={() => setIsCameraOn((c) => !c)}
-            className={`p-3 rounded-full ${
+            className={`p-3 cursor-pointer rounded-full ${
               !isCameraOn ? "bg-red-500" : "bg-gray-700"
             }`}
           >
@@ -524,7 +544,7 @@ const StreamerStudio: React.FC = () => {
           />
           <button
             onClick={sendMessage}
-            className="bg-purple-500 p-2 rounded-lg hover:bg-purple-600"
+            className="bg-purple-500 cursor-pointer p-2 rounded-lg hover:bg-purple-600"
           >
             <FiMessageSquare />
           </button>
@@ -536,12 +556,12 @@ const StreamerStudio: React.FC = () => {
         <div className="flex justify-between">
           <button
             onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
-            className="flex items-center space-x-2 p-2 hover:bg-gray-700 rounded-lg"
+            className="cursor-pointer flex items-center space-x-2 p-2 hover:bg-gray-700 rounded-lg"
           >
             <FiSettings />
             <span>Theme: {theme.charAt(0).toUpperCase() + theme.slice(1)}</span>
           </button>
-          <button className="flex items-center space-x-2 p-2 hover:bg-gray-700 rounded-lg">
+          <button className="cursor-pointer flex items-center space-x-2 p-2 hover:bg-gray-700 rounded-lg">
             <FiDollarSign />
             <span>
               Donations: $
