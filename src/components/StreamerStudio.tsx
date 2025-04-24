@@ -1,7 +1,7 @@
 // StreamerStudio.tsx
 import { useState, useEffect, useRef, FC } from 'react';
 import { io, Socket } from 'socket.io-client';
-import './StreamerStudio.css';
+
 
 const StreamerStudio: FC = () => {
   const [walletConnected, setWalletConnected] = useState<boolean>(false);

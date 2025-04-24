@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef, FC } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { useLocation } from 'react-router-dom';
-import './ViewerPage.css';
+
 
 const ViewerPage: FC = () => {
   const [isConnected, setIsConnected] = useState<boolean>(false);
